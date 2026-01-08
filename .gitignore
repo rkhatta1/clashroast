@@ -1,0 +1,7 @@
+.env
+.venv
+*.local
+
+videos/
+frames/
+__pycache__
