@@ -46,10 +46,10 @@ class Config:
 
     # Caption Styling
     CAPTION_FONT = 'Poppins'
-    CAPTION_FONT_SIZE = 100  # Large for word chunk pop
+    CAPTION_FONT_SIZE = 125  # Large for word chunk pop
     CAPTION_COLOR = 'AAFF00'  # Lime green (BGR format for ASS: 00FFAA)
     CAPTION_OUTLINE_COLOR = '000000'  # Black outline
     CAPTION_OUTLINE_WIDTH = 6  # Thicker outline for bolder look
-    CAPTION_POSITION_Y = 40  # Percentage from top (40% = upper-center, avoids Peter)
+    CAPTION_POSITION_Y = 50  # Percentage from top (40% = upper-center, avoids Peter)
     CAPTION_POP_DURATION_MS = 100  # Duration of pop-in animation
     CAPTION_BOUNCE_SCALE = 110  # Overshoot scale percentage

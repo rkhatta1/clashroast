@@ -26,34 +26,39 @@ class VideoEditingService:
         initial_segments.sort(key=lambda x: x['start'])
 
         # --- Phase 1: Calculate Audio Activity Zones (Original Timeline) ---
+        # Merge only truly overlapping audio clips; any gap creates a jump cut
         audio_clips = []
         for clip in commentary_data.get('commentary', []):
             if not clip.get('audio_path'):
                 continue
-            
+
             ts = float(clip['timestamp'])
             duration = VideoEditingService._get_audio_duration(clip['audio_path'])
-            
+
             # Define Active Zone (Exact Audio Duration)
             start = ts
             end = ts + duration
-            
+
             audio_clips.append({'start': start, 'end': end, 'path': clip['audio_path'], 'orig_ts': ts})
 
-        # Merge overlapping audio zones or zones within 2s gap
+        # Merge only overlapping audio zones; any gap = jump cut
+        # When clips overlap, we keep only the first clip's timing since
+        # overlapping clips will be skipped in Phase 4 anyway
         audio_clips.sort(key=lambda x: x['start'])
         audio_zones = []
         if audio_clips:
             current_start = audio_clips[0]['start']
             current_end = audio_clips[0]['end']
-            
+
             for i in range(1, len(audio_clips)):
                 clip = audio_clips[i]
-                # If gap is less than 0.5 seconds, merge/extend
-                if clip['start'] <= (current_end + 0.5):
-                    current_end = max(current_end, clip['end'])
+                # Only merge if clips truly overlap (no gap tolerance)
+                if clip['start'] <= current_end:
+                    # Overlapping clip will be skipped - don't extend the zone
+                    # Keep current_end as-is (first clip's end time)
+                    pass
                 else:
-                    # Gap > 0.5s found, push current zone
+                    # Any gap = separate zone = jump cut
                     audio_zones.append({'start': current_start, 'end': current_end})
                     current_start = clip['start']
                     current_end = clip['end']
@@ -160,7 +165,8 @@ class VideoEditingService:
                     voice_filter.append(f"[{i}:a]adelay={clip['delay']}|{clip['delay']}[v{i}]")
                 
                 all_labels = "".join([f"[v{i}]" for i in range(len(final_audio_clips))])
-                voice_filter.append(f"{all_labels}amix=inputs={len(final_audio_clips)}:dropout_transition=0[a_out]")
+                # normalize=0 prevents amix from dividing volume by number of inputs
+                voice_filter.append(f"{all_labels}amix=inputs={len(final_audio_clips)}:dropout_transition=0:normalize=0[a_out]")
                 
                 cmd_voice = ['ffmpeg', '-y'] + voice_inputs + [
                     '-filter_complex', ";".join(voice_filter),
@@ -276,10 +282,12 @@ class VideoEditingService:
 
             # Step 3: Final Mix
             print("Rendering Final Mix...")
+            # Volume levels: gameplay 50%, voiceover 90%
+            # normalize=0 prevents volume changes from amix
             final_filter = [
-                "[0:a]volume=0.3[a_game]",
-                "[1:a]volume=1.5[a_voice]",
-                "[a_game][a_voice]amix=inputs=2:duration=first[a_final]"
+                "[0:a]volume=0.5[a_game]",
+                "[1:a]volume=1.1[a_voice]",
+                "[a_game][a_voice]amix=inputs=2:duration=first:normalize=0[a_final]"
             ]
             
             cmd_final = [

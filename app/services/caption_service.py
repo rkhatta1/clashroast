@@ -7,8 +7,8 @@ from app.config import Config
 class CaptionService:
     """Service for generating word-chunk captions with pop animation."""
 
-    # Number of words per caption chunk
-    WORDS_PER_CHUNK = 3
+    # Number of words per caption chunk (max 2, can be less)
+    WORDS_PER_CHUNK = 2
 
     @staticmethod
     def get_audio_duration(file_path):
