@@ -6,3 +6,4 @@ redis==5.0.1
 google-genai
 Pillow==10.1.0
 python-dotenv==1.0.0
+fish-audio-sdk

@@ -4,18 +4,56 @@ import json
 from app.config import Config
 from app.prompts.frame_analysis import get_frame_analysis_prompt
 from app.prompts.commentary import get_commentary_prompt
+from app.prompts.edl import get_edl_prompt
 
 class GeminiService:
     def __init__(self):
-        if Config.GEMINI_API_KEY:
-            self.client = genai.Client(api_key=Config.GEMINI_API_KEY)
-        else:
-            # Fallback to Vertex AI if no API key (assuming gcloud auth is set)
-            self.client = genai.Client(
-                vertexai=True,
-                project=Config.GCP_PROJECT_ID,
-                location=Config.GCP_LOCATION
+        print("DEBUG: Initializing Client with Gemini API")
+        self.client = genai.Client(
+            api_key=Config.GEMINI_API_KEY
+        )
+
+    def generate_edl(self, merged_events, total_duration):
+        """
+        Generate Edit Decision List using Gemini.
+        """
+        prompt = get_edl_prompt(merged_events, total_duration)
+        
+        response_schema = {
+            'type': 'OBJECT',
+            'properties': {
+                'keep_segments': {
+                    'type': 'ARRAY',
+                    'items': {
+                        'type': 'OBJECT',
+                        'properties': {
+                            'start': {'type': 'NUMBER'},
+                            'end': {'type': 'NUMBER'},
+                            'reason': {'type': 'STRING'}
+                        },
+                        'required': ['start', 'end', 'reason']
+                    }
+                }
+            },
+            'required': ['keep_segments']
+        }
+        
+        response = self.client.models.generate_content(
+            model=Config.GEMINI_FLASH_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type='application/json',
+                response_schema=response_schema,
+                temperature=1.0,
             )
+        )
+        
+        try:
+            return json.loads(response.text)
+        except json.JSONDecodeError:
+             # Fallback
+            text = response.text.replace('```json', '').replace('```', '').strip()
+            return json.loads(text)
     
     def analyze_frame_batch(self, frame_batch_info):
         """
@@ -115,16 +153,46 @@ class GeminiService:
     def generate_commentary(self, merged_events):
         """
         Generate first-person commentary using Gemini Pro.
+        Returns: Dict with 'commentary' list of {timestamp, text}.
         """
         prompt = get_commentary_prompt(merged_events)
+        
+        response_schema = {
+            'type': 'OBJECT',
+            'properties': {
+                'commentary': {
+                    'type': 'ARRAY',
+                    'items': {
+                        'type': 'OBJECT',
+                        'properties': {
+                            'timestamp': {'type': 'NUMBER'},
+                            'text': {'type': 'STRING'}
+                        },
+                        'required': ['timestamp', 'text']
+                    }
+                }
+            },
+            'required': ['commentary']
+        }
         
         response = self.client.models.generate_content(
             model=Config.GEMINI_PRO_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
+                response_mime_type='application/json',
+                response_schema=response_schema,
                 temperature=1.0,
-                thinking_config=types.ThinkingConfig(thinking_level="low")
+                safety_settings=[
+                    types.SafetySetting(
+                        category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                        threshold=types.HarmBlockThreshold.OFF,
+                    ),
+                ]
             )
         )
         
-        return response.text
+        try:
+            return json.loads(response.text)
+        except json.JSONDecodeError:
+            text = response.text.replace('```json', '').replace('```', '').strip()
+            return json.loads(text)

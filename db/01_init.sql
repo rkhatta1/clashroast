@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS videos (
     filename VARCHAR(255) NOT NULL,
     duration FLOAT,
     status VARCHAR(50) DEFAULT 'pending',
+    edl JSON,
+    final_video_path VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -11,7 +13,7 @@ CREATE TABLE IF NOT EXISTS videos (
 -- Create frame_batches table
 CREATE TABLE IF NOT EXISTS frame_batches (
     id SERIAL PRIMARY KEY,
-    video_id INTEGER NOT NULL REFERENCES videos(id),
+    video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
     batch_number INTEGER NOT NULL,
     frame_paths JSON,
     timestamps JSON,
@@ -25,9 +27,12 @@ CREATE TABLE IF NOT EXISTS frame_batches (
 -- Create commentaries table
 CREATE TABLE IF NOT EXISTS commentaries (
     id SERIAL PRIMARY KEY,
-    video_id INTEGER NOT NULL REFERENCES videos(id),
+    video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
     merged_events JSON,
     commentary_text TEXT,
+    clean_commentary_text TEXT,
+    structured_commentary JSON,
+    audio_path VARCHAR(255),
     status VARCHAR(50) DEFAULT 'pending',
     error_message TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

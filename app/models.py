@@ -11,6 +11,8 @@ class Video(db.Model):
     filename = db.Column(db.String(255), nullable=False)
     duration = db.Column(db.Float)
     status = db.Column(db.String(50), default='pending')  # pending, processing, completed, failed
+    edl = db.Column(JSON)  # Edit Decision List: [{"start": 0, "end": 10}, ...]
+    final_video_path = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -45,7 +47,10 @@ class Commentary(db.Model):
     merged_events = db.Column(JSON)
     
     # Final commentary
-    commentary_text = db.Column(db.Text)
+    commentary_text = db.Column(db.Text) # Raw text with timestamps
+    clean_commentary_text = db.Column(db.Text) # Text without timestamps
+    structured_commentary = db.Column(JSON) # List of {timestamp, text, audio_path}
+    audio_path = db.Column(db.String(255)) # Path to mixed audio (optional/legacy)
     
     status = db.Column(db.String(50), default='pending')
     error_message = db.Column(db.Text)
