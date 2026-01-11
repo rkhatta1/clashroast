@@ -53,3 +53,10 @@ class Config:
     CAPTION_POSITION_Y = 50  # Percentage from top (40% = upper-center, avoids Peter)
     CAPTION_POP_DURATION_MS = 100  # Duration of pop-in animation
     CAPTION_BOUNCE_SCALE = 110  # Overshoot scale percentage
+
+    # Sound Effects
+    SFX_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'audio', 'sfx')
+    SFX_START = 'thump.wav'  # Played at start of video
+    SFX_END = 'get_out.wav'  # Played at end of video
+    SFX_START_END_VOLUME = 0.8  # 80% volume for start/end SFX
+    SFX_INTERMEDIATE_VOLUME = 0.45  # 65% volume for intermediate SFX

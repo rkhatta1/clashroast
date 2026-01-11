@@ -1,16 +1,22 @@
 import os
 import subprocess
 import json
+import random
 from app.config import Config
 from app.services.caption_service import CaptionService
 
 class VideoEditingService:
     # Peter Griffin overlay settings
-    PETER_SCALE = 1.5   # Scale factor for the overlay
+    PETER_SCALE = 2.0   # Scale factor for the overlay
     PETER_ROTATION_DEG = 30  # Rotation angle in degrees (positive = counterclockwise)
     PETER_PEEK_AMOUNT = 0.6  # How much of Peter is visible (0.6 = 60% visible, 40% off-screen)
     PETER_Y_POSITION = 0.65  # Vertical position (0.55 = 55% down the screen)
     INTRO_SLIDE_DURATION = 0.4  # Duration of slide-in animation in seconds
+
+    # Flash-in effect settings
+    FLASH_DURATION = 0.7  # Duration of flash-in effect in seconds
+    FLASH_INITIAL_BRIGHTNESS = 0.6  # Starting brightness boost (0-1 range, 0.6 = +60%)
+    FLASH_INITIAL_GAMMA = 0.5  # Starting gamma (lower = brighter highlights)
 
     @staticmethod
     def render_final_video(video_path, edl, commentary_data, output_path):
@@ -19,7 +25,7 @@ class VideoEditingService:
         Refines EDL to trim gaps larger than 2s between audio clips.
         """
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        
+
         initial_segments = edl.get('keep_segments', [])
         if not initial_segments:
             raise ValueError("EDL is empty, cannot render video.")
@@ -77,18 +83,18 @@ class VideoEditingService:
                     inter_end = min(seg_end, zone['end'])
                     if inter_start < inter_end:
                         refined_segments.append({'start': inter_start, 'end': inter_end})
-        
+
         if not refined_segments:
              print("Warning: Refined EDL resulted in empty video. Falling back to original EDL.")
              refined_segments = initial_segments
 
         keep_segments = refined_segments
-        
+
         # --- Phase 3: Timestamp Mapping ---
         mapped_audio_clips = []
         current_edit_time = 0.0
-        segment_mappings = [] 
-        
+        segment_mappings = []
+
         for seg in keep_segments:
             duration = seg['end'] - seg['start']
             segment_mappings.append({
@@ -97,14 +103,14 @@ class VideoEditingService:
                 'edit_start': current_edit_time
             })
             current_edit_time += duration
-            
+
         total_edited_duration = current_edit_time
-        
+
         for clip in commentary_data.get('commentary', []):
             if not clip.get('audio_path'):
                 continue
             ts = float(clip['timestamp'])
-            
+
             # Map timestamp
             mapped_ts = -1
             for mapping in segment_mappings:
@@ -112,13 +118,13 @@ class VideoEditingService:
                     offset = ts - mapping['orig_start']
                     mapped_ts = mapping['edit_start'] + offset
                     break
-            
+
             if mapped_ts >= 0:
                 mapped_audio_clips.append({
                     'path': clip['audio_path'],
                     'start': mapped_ts
                 })
-        
+
         # --- Phase 4: Overlap Prevention with 1s Allowance ---
         mapped_audio_clips.sort(key=lambda x: x['start'])
         final_audio_clips = []
@@ -140,43 +146,70 @@ class VideoEditingService:
             })
             kept_audio_paths.add(clip['path'])
             last_end_time = start_time + duration
-        
+
         # === Phase 5: Multi-Step Rendering to prevent OOM ===
         temp_voice_path = output_path + ".voice.wav"
         temp_video_path = output_path + ".video.mp4"
-        
+
         try:
-            # Step 1: Generate Voice Track (Audio Only)
-            print("Rendering Voice Track...")
-            if not final_audio_clips:
+            # Step 1: Generate Voice Track with SFX (Audio Only)
+            print("Rendering Voice Track with SFX...")
+
+            # Build SFX list: start SFX, intermediate SFX at alternate zone ends, end SFX
+            sfx_clips = VideoEditingService._build_sfx_list(
+                audio_zones,
+                segment_mappings,
+                total_edited_duration
+            )
+
+            # Combine voice clips and SFX clips
+            all_audio_clips = []
+
+            # Add voice clips
+            for clip in final_audio_clips:
+                all_audio_clips.append({
+                    'path': clip['path'],
+                    'delay': clip['delay'],
+                    'volume': 1.0  # Voice clips at full volume (mixed later)
+                })
+
+            # Add SFX clips
+            for sfx in sfx_clips:
+                all_audio_clips.append({
+                    'path': sfx['path'],
+                    'delay': sfx['delay'],
+                    'volume': sfx['volume']
+                })
+
+            if not all_audio_clips:
                 cmd_voice = [
-                    'ffmpeg', '-y', '-f', 'lavfi', '-i', f'anullsrc=r=44100:cl=stereo:d={total_edited_duration}', 
+                    'ffmpeg', '-y', '-f', 'lavfi', '-i', f'anullsrc=r=44100:cl=stereo:d={total_edited_duration}',
                     temp_voice_path
                 ]
             else:
                 voice_inputs = []
                 voice_filter = []
-                
-                # We do NOT use base silence here because amix logic is simpler with just clips
-                # We will just pad the output if needed or rely on adelay
-                
-                for i, clip in enumerate(final_audio_clips):
+
+                for i, clip in enumerate(all_audio_clips):
                     voice_inputs.extend(['-i', clip['path']])
-                    voice_filter.append(f"[{i}:a]adelay={clip['delay']}|{clip['delay']}[v{i}]")
-                
-                all_labels = "".join([f"[v{i}]" for i in range(len(final_audio_clips))])
+                    # Apply volume and delay
+                    voice_filter.append(
+                        f"[{i}:a]volume={clip['volume']},adelay={clip['delay']}|{clip['delay']}[v{i}]"
+                    )
+
+                all_labels = "".join([f"[v{i}]" for i in range(len(all_audio_clips))])
                 # normalize=0 prevents amix from dividing volume by number of inputs
-                voice_filter.append(f"{all_labels}amix=inputs={len(final_audio_clips)}:dropout_transition=0:normalize=0[a_out]")
-                
+                voice_filter.append(f"{all_labels}amix=inputs={len(all_audio_clips)}:dropout_transition=0:normalize=0[a_out]")
+
                 cmd_voice = ['ffmpeg', '-y'] + voice_inputs + [
                     '-filter_complex', ";".join(voice_filter),
                     '-map', '[a_out]',
                     '-c:a', 'pcm_s16le',
                     temp_voice_path
                 ]
-            
+
             subprocess.run(cmd_voice, check=True)
-            
+
             # Step 2: Render Stitched Video (Sequential Clips + Concat Demuxer)
             # Each segment gets Peter Griffin overlay with alternating positions
             print("Rendering Stitched Video with Peter Griffin overlay...")
@@ -214,11 +247,11 @@ class VideoEditingService:
                     seg_filename
                 ]
                 subprocess.run(cmd_seg, check=True)
-            
+
             with open(segment_list_path, 'w') as f:
                 for seg_file in segment_files:
                     f.write(f"file '{seg_file}'\n")
-            
+
             cmd_concat = [
                 'ffmpeg', '-y',
                 '-f', 'concat',
@@ -228,7 +261,7 @@ class VideoEditingService:
                 temp_video_path
             ]
             subprocess.run(cmd_concat, check=True)
-            
+
             # Cleanup segments
             for seg_file in segment_files:
                 if os.path.exists(seg_file): os.remove(seg_file)
@@ -286,10 +319,10 @@ class VideoEditingService:
             # normalize=0 prevents volume changes from amix
             final_filter = [
                 "[0:a]volume=0.5[a_game]",
-                "[1:a]volume=1.1[a_voice]",
+                "[1:a]volume=1.5[a_voice]",
                 "[a_game][a_voice]amix=inputs=2:duration=first:normalize=0[a_final]"
             ]
-            
+
             cmd_final = [
                 'ffmpeg', '-y',
                 '-i', temp_video_path,
@@ -302,15 +335,15 @@ class VideoEditingService:
                 output_path
             ]
             subprocess.run(cmd_final, check=True)
-            
+
             # Cleanup
             if os.path.exists(temp_voice_path): os.remove(temp_voice_path)
             if os.path.exists(temp_video_path): os.remove(temp_video_path)
-            
+
         except subprocess.CalledProcessError as e:
             print(f"FFmpeg Error: {e}")
             raise RuntimeError("FFmpeg processing failed")
-            
+
         return output_path
 
     @staticmethod
@@ -406,7 +439,29 @@ class VideoEditingService:
             else:
                 x_animated = f"W-w*{peek_amount}*pow(min(t/{slide_duration}\\,1)\\,2)"
 
-            overlay_filter = f"{peter_filter};[0:v][peter]overlay=x={x_animated}:y={y_pos}[v_out]"
+            # Add flash-in effect: fade from white/bright to normal
+            # Using eq filter with animated brightness and gamma
+            flash_duration = VideoEditingService.FLASH_DURATION
+            initial_brightness = VideoEditingService.FLASH_INITIAL_BRIGHTNESS
+            initial_gamma = VideoEditingService.FLASH_INITIAL_GAMMA
+
+            # Brightness eases from initial_brightness to 0 over flash_duration
+            # Gamma eases from initial_gamma to 1 (normal) over flash_duration
+            # Using circOut easing: eased = sqrt(1 - pow(1 - progress, 2))
+            # For brightness: b = initial * (1 - eased)
+            # For gamma: g = initial + (1 - initial) * eased
+
+            # CircOut easing formula: sqrt(1 - pow(1 - min(t/duration, 1), 2))
+            # eq filter brightness range is -1 to 1, gamma is 0.1 to 10
+            circ_out_expr = f"sqrt(1-pow(1-min(t/{flash_duration}\\,1)\\,2))"
+            brightness_expr = f"{initial_brightness}*(1-{circ_out_expr})"
+            gamma_expr = f"{initial_gamma}+(1-{initial_gamma})*{circ_out_expr}"
+
+            overlay_filter = (
+                f"{peter_filter};"
+                f"[0:v][peter]overlay=x={x_animated}:y={y_pos},"
+                f"eq=brightness={brightness_expr}:gamma={gamma_expr}:eval=frame[v_out]"
+            )
         else:
             # Static position
             overlay_filter = f"{peter_filter};[0:v][peter]overlay=x={x_final}:y={y_pos}[v_out]"
@@ -451,3 +506,95 @@ class VideoEditingService:
             print(f"Error getting dimensions for {file_path}: {e}")
             # Default to 9:16 portrait (common for shorts)
             return 1080, 1920
+
+    @staticmethod
+    def _build_sfx_list(audio_zones, segment_mappings, total_edited_duration):
+        """
+        Build list of SFX clips to add to the voice track.
+
+        Args:
+            audio_zones: List of audio zones in original timeline
+            segment_mappings: List of {orig_start, orig_end, edit_start} for timeline mapping
+            total_edited_duration: Total duration of edited video in seconds
+
+        Returns:
+            List of {path, delay (ms), volume} for SFX clips
+        """
+        sfx_clips = []
+
+        # Get SFX paths
+        sfx_dir = Config.SFX_DIR
+        start_sfx = os.path.join(sfx_dir, Config.SFX_START)
+        end_sfx = os.path.join(sfx_dir, Config.SFX_END)
+        start_end_volume = Config.SFX_START_END_VOLUME
+        intermediate_volume = Config.SFX_INTERMEDIATE_VOLUME
+
+        # Get list of intermediate SFX (all files except start and end)
+        intermediate_sfx = []
+        if os.path.exists(sfx_dir):
+            for f in os.listdir(sfx_dir):
+                if f.endswith(('.wav', '.mp3')) and f not in [Config.SFX_START, Config.SFX_END]:
+                    intermediate_sfx.append(os.path.join(sfx_dir, f))
+
+        # 1. Add start SFX at 0:00
+        if os.path.exists(start_sfx):
+            sfx_clips.append({
+                'path': start_sfx,
+                'delay': 0,
+                'volume': start_end_volume
+            })
+
+        # 2. Add intermediate SFX at the END of alternate audio zones
+        # SFX is timed to END at the zone end (plays during the last few seconds of the zone)
+        for i, zone in enumerate(audio_zones):
+            # Only add SFX at alternate zones (every other zone)
+            if i % 2 != 0:  # Skip first, add at second, skip third, etc.
+                continue
+
+            # Skip the last zone (we'll add end SFX there instead)
+            if i == len(audio_zones) - 1:
+                continue
+
+            # Map zone end time to edited timeline
+            zone_end_original = zone['end']
+            mapped_end = VideoEditingService._map_to_edited_timeline(
+                zone_end_original, segment_mappings
+            )
+
+            if mapped_end >= 0 and intermediate_sfx:
+                # Pick a random SFX
+                sfx_path = random.choice(intermediate_sfx)
+                # Get SFX duration so it ends at the zone end
+                sfx_duration = VideoEditingService._get_audio_duration(sfx_path)
+                # Start SFX early so it ends at zone end
+                sfx_start = max(0, mapped_end - sfx_duration)
+                sfx_clips.append({
+                    'path': sfx_path,
+                    'delay': int(sfx_start * 1000),  # Convert to ms
+                    'volume': intermediate_volume
+                })
+
+        # 3. Add end SFX at the end of video
+        if os.path.exists(end_sfx):
+            # Get duration of end SFX to position it correctly
+            end_sfx_duration = VideoEditingService._get_audio_duration(end_sfx)
+            end_delay = max(0, (total_edited_duration - end_sfx_duration) * 1000)
+            sfx_clips.append({
+                'path': end_sfx,
+                'delay': int(end_delay),
+                'volume': start_end_volume
+            })
+
+        return sfx_clips
+
+    @staticmethod
+    def _map_to_edited_timeline(orig_ts, segment_mappings):
+        """
+        Map a timestamp from original video to edited video timeline.
+        Returns -1 if the timestamp falls outside kept segments.
+        """
+        for mapping in segment_mappings:
+            if mapping['orig_start'] <= orig_ts <= mapping['orig_end']:
+                offset = orig_ts - mapping['orig_start']
+                return mapping['edit_start'] + offset
+        return -1

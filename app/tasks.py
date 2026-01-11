@@ -23,33 +23,33 @@ def process_video_task(self, video_id):
     """Main task to orchestrate video processing."""
     from app import create_app
     app = create_app()
-    
+
     with app.app_context():
         video = Video.query.get(video_id)
         if not video:
             return {'error': 'Video not found'}
-        
+
         try:
             # Update status
             video.status = 'processing'
             db.session.commit()
-            
+
             # Step 1: Extract frames
             video_path = os.path.join(Config.VIDEOS_DIR, video.filename)
             frame_dir = os.path.join(Config.FRAMES_DIR, str(video_id))
-            
+
             frame_info = VideoService.extract_frames(
                 video_path,
                 frame_dir,
                 fps=Config.FRAMES_PER_SECOND
             )
-            
+
             # Step 2: Create batches
             batches = VideoService.create_frame_batches(
                 frame_info,
                 batch_size=Config.FRAMES_PER_BATCH
             )
-            
+
             # Step 3: Create FrameBatch records
             batch_ids = []
             for i, batch in enumerate(batches):
@@ -63,26 +63,26 @@ def process_video_task(self, video_id):
                 db.session.add(frame_batch)
                 db.session.flush()
                 batch_ids.append(frame_batch.id)
-            
+
             db.session.commit()
-            
+
             # Step 4: Process batches in parallel with Celery
             # Define the group of analysis tasks
             analysis_group = group(
                 analyze_frame_batch_task.s(batch_id) for batch_id in batch_ids
             )
-            
+
             # Step 5: Chain the group with the merge task
             workflow = chain(
                 analysis_group,
                 merge_and_generate_commentary_task.si(video_id)
             )
-            
+
             # Execute the workflow asynchronously
             workflow.apply_async()
-            
+
             return {'status': 'processing_started', 'video_id': video_id}
-            
+
         except Exception as e:
             video.status = 'failed'
             db.session.commit()
@@ -93,33 +93,33 @@ def analyze_frame_batch_task(self, batch_id):
     """Analyze a single frame batch with Gemini Flash."""
     from app import create_app
     app = create_app()
-    
+
     with app.app_context():
         batch = FrameBatch.query.get(batch_id)
         if not batch:
             return {'error': 'Batch not found'}
-        
+
         try:
             batch.status = 'processing'
             db.session.commit()
-            
+
             # Prepare frame info for Gemini
             frame_info = [
                 {'path': path, 'formatted_time': ts}
                 for path, ts in zip(batch.frame_paths, batch.timestamps)
             ]
-            
+
             # Call Gemini
             gemini = GeminiService()
             response = gemini.analyze_frame_batch(frame_info)
-            
+
             # Save response
             batch.analysis_response = response
             batch.status = 'completed'
             db.session.commit()
-            
+
             return {'batch_id': batch_id, 'status': 'completed'}
-            
+
         except Exception as e:
             batch.status = 'failed'
             batch.error_message = str(e)
@@ -131,49 +131,49 @@ def merge_and_generate_commentary_task(self, video_id):
     """Merge batch responses, generate EDL, commentary, and audio."""
     from app import create_app
     app = create_app()
-    
+
     with app.app_context():
         video = Video.query.get(video_id)
         if not video:
             return {'error': 'Video not found'}
-        
+
         try:
             # Get all completed batches
             batches = FrameBatch.query.filter_by(
                 video_id=video_id,
                 status='completed'
             ).order_by(FrameBatch.batch_number).all()
-            
+
             if not batches:
                 raise Exception('No completed batches found')
-            
+
             # Merge responses
             batch_responses = [b.analysis_response for b in batches]
             merged_events = MergeService.merge_batch_responses(batch_responses)
-            
+
             # --- Generate EDL ---
             # Create EditingService instance
-            edl = EditingService.generate_edl(merged_events, video.duration or 180) 
-            
+            edl = EditingService.generate_edl(merged_events, video.duration or 180)
+
             # Filter events to only those in the kept segments
             filtered_events = EditingService.filter_events_by_edl(merged_events, edl)
-            
+
             # Save EDL to video
             video.edl = edl
             db.session.commit()
-            
+
             # --- Generate Commentary ---
             # This now returns a dict {'commentary': [{'timestamp': x, 'text': y}, ...]}
             gemini = GeminiService()
             commentary_data = gemini.generate_commentary(filtered_events)
-            
+
             # Extract plain text for simple display
             full_text = " ".join([c['text'] for c in commentary_data.get('commentary', [])])
-            
+
             # Save commentary initial state
             commentary = Commentary(
                 video_id=video_id,
-                merged_events=merged_events, 
+                merged_events=merged_events,
                 commentary_text=full_text,
                 structured_commentary=commentary_data, # Save raw structure
                 clean_commentary_text=full_text,
@@ -181,13 +181,13 @@ def merge_and_generate_commentary_task(self, video_id):
             )
             db.session.add(commentary)
             db.session.commit()
-            
+
             # --- Audio Synthesis (Segments) ---
             try:
                 tts = FishAudioService()
                 # Synthesize each segment and get updated data with audio paths
                 updated_data = tts.synthesize_commentary_segments(commentary_data, video_id)
-                
+
                 commentary.structured_commentary = updated_data
                 commentary.status = 'completed'
                 db.session.commit()
@@ -199,9 +199,9 @@ def merge_and_generate_commentary_task(self, video_id):
 
             # Step 6: Render Final Video
             render_final_video_task.delay(video_id)
-            
+
             return {'video_id': video_id, 'status': 'audio_completed'}
-            
+
         except Exception as e:
             video.status = 'failed'
             if not video.commentary:
@@ -214,7 +214,7 @@ def merge_and_generate_commentary_task(self, video_id):
             else:
                 video.commentary.status = 'failed'
                 video.commentary.error_message = str(e)
-            
+
             db.session.commit()
             raise
 
@@ -223,36 +223,36 @@ def render_final_video_task(self, video_id):
     """Render the final video with cuts and audio."""
     from app import create_app
     app = create_app()
-    
+
     with app.app_context():
         video = Video.query.get(video_id)
         if not video or not video.commentary or not video.edl:
             return {'error': 'Missing video, commentary or EDL'}
-            
+
         try:
             video.status = 'rendering'
             db.session.commit()
-            
+
             source_path = os.path.join(Config.VIDEOS_DIR, video.filename)
             # Pass the structured commentary with audio paths
             commentary_data = video.commentary.structured_commentary
-            
+
             output_filename = f"final_{video.filename}"
             output_path = os.path.join(Config.OUTPUT_DIR, output_filename)
-            
+
             VideoEditingService.render_final_video(
                 source_path,
                 video.edl,
                 commentary_data,
                 output_path
             )
-            
+
             video.final_video_path = output_path
             video.status = 'completed'
             db.session.commit()
-            
+
             return {'status': 'completed', 'path': output_path}
-            
+
         except Exception as e:
             video.status = 'failed'
             print(f"Render failed: {e}")
