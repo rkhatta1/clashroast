@@ -10,33 +10,43 @@ api = Blueprint('api', __name__)
 def create_video():
     """
     Create a new video processing job.
-    
-    Body: {"filename": "match1.mp4"}
+
+    Body: {
+        "filename": "match1.mp4",
+        "deck_description": "Optional description of the deck being played"
+    }
     """
     data = request.json
     filename = data.get('filename')
-    
+    deck_description = data.get('deck_description')
+
     if not filename:
         return jsonify({'error': 'filename required'}), 400
-    
+
     video_path = os.path.join(Config.VIDEOS_DIR, filename)
     if not os.path.exists(video_path):
         return jsonify({'error': 'Video file not found'}), 404
-    
+
     # Create video record
     from app.services.video_service import VideoService
     duration = VideoService.get_video_duration(video_path)
-    
-    video = Video(filename=filename, duration=duration, status='pending')
+
+    video = Video(
+        filename=filename,
+        duration=duration,
+        deck_description=deck_description,
+        status='pending'
+    )
     db.session.add(video)
     db.session.commit()
-    
+
     # Start processing
     process_video_task.delay(video.id)
-    
+
     return jsonify({
         'id': video.id,
         'filename': video.filename,
+        'deck_description': video.deck_description,
         'status': video.status
     }), 201
 

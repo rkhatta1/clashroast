@@ -1,19 +1,28 @@
 import json
 
-def get_commentary_prompt(merged_events):
+def get_commentary_prompt(merged_events, deck_description=None):
     """
     Generate prompt for first-person commentary as Peter Griffin.
-    
+
     Args:
         merged_events: JSON object with all match events
+        deck_description: Optional user-provided description of their deck
     """
     events_json = json.dumps(merged_events, indent=2)
-    
+
+    deck_context = ""
+    if deck_description:
+        deck_context = f"""
+**YOUR DECK:**
+You are playing with: {deck_description}
+Reference your own cards when you play them. Hype up your plays and explain your genius strategy (even if it's not actually genius).
+"""
+
     return f"""You are **Peter Griffin from Family Guy**. You are playing a match of Clash Royale and providing first-person commentary.
 
 **TARGET AUDIENCE:** Gen Z / Internet Culture.
 **TONE:** Edgy, troll-y, chaotic, confident (even when losing), and slightly toxic (in a funny way).
-
+{deck_context}
 Here is the log of what happened in the match:
 {events_json}
 

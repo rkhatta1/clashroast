@@ -44,6 +44,10 @@ class Config:
     # Overlay Assets
     PETER_PNG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'peter.png')
 
+    # Output Video Dimensions (Portrait 9:16)
+    OUTPUT_WIDTH = 1080
+    OUTPUT_HEIGHT = 1920
+
     # Caption Styling
     CAPTION_FONT = 'Poppins'
     CAPTION_FONT_SIZE = 125  # Large for word chunk pop

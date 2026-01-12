@@ -6,6 +6,10 @@ from app.config import Config
 from app.services.caption_service import CaptionService
 
 class VideoEditingService:
+    # Output dimensions (portrait 9:16)
+    OUTPUT_WIDTH = Config.OUTPUT_WIDTH
+    OUTPUT_HEIGHT = Config.OUTPUT_HEIGHT
+
     # Peter Griffin overlay settings
     PETER_SCALE = 2.0   # Scale factor for the overlay
     PETER_ROTATION_DEG = 30  # Rotation angle in degrees (positive = counterclockwise)
@@ -26,13 +30,25 @@ class VideoEditingService:
         """
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
+        print("\n" + "="*60)
+        print("DEBUG: Video Editing Service - Render Final Video")
+        print("="*60)
+
         initial_segments = edl.get('keep_segments', [])
         if not initial_segments:
             raise ValueError("EDL is empty, cannot render video.")
         initial_segments.sort(key=lambda x: x['start'])
 
+        print(f"\nInitial EDL Segments ({len(initial_segments)} segments):")
+        for i, seg in enumerate(initial_segments):
+            print(f"  Segment {i}: [{seg['start']:.2f}s - {seg['end']:.2f}s] ({seg['end'] - seg['start']:.2f}s)")
+
         # --- Phase 1: Calculate Audio Activity Zones (Original Timeline) ---
-        # Merge only truly overlapping audio clips; any gap creates a jump cut
+        print("\n" + "="*60)
+        print("DEBUG: Phase 1 - Audio Activity Zones")
+        print("="*60)
+
+        # Collect audio clips with their info
         audio_clips = []
         for clip in commentary_data.get('commentary', []):
             if not clip.get('audio_path'):
@@ -45,35 +61,76 @@ class VideoEditingService:
             start = ts
             end = ts + duration
 
-            audio_clips.append({'start': start, 'end': end, 'path': clip['audio_path'], 'orig_ts': ts})
+            audio_clips.append({
+                'start': start,
+                'end': end,
+                'path': clip['audio_path'],
+                'orig_ts': ts,
+                'duration': duration
+            })
 
-        # Merge only overlapping audio zones; any gap = jump cut
-        # When clips overlap, we keep only the first clip's timing since
-        # overlapping clips will be skipped in Phase 4 anyway
+        print(f"\nAudio Clips (before merging): {len(audio_clips)}")
+        for i, ac in enumerate(audio_clips):
+            print(f"  Clip {i}: [{ac['start']:.2f}s - {ac['end']:.2f}s] - {os.path.basename(ac['path'])}")
+
+        # Merge overlapping audio clips into zones
+        # Track which clips are "primary" (zone starters) vs "absorbed" (merged into existing zone)
         audio_clips.sort(key=lambda x: x['start'])
         audio_zones = []
+        primary_clips = []  # Clips that start each zone - these will be used for audio
+        absorbed_clips = []  # Clips that overlap and are absorbed into zones
+
         if audio_clips:
-            current_start = audio_clips[0]['start']
-            current_end = audio_clips[0]['end']
+            current_zone_start = audio_clips[0]['start']
+            current_zone_end = audio_clips[0]['end']
+            current_primary_clip = audio_clips[0]
 
             for i in range(1, len(audio_clips)):
                 clip = audio_clips[i]
                 # Only merge if clips truly overlap (no gap tolerance)
-                if clip['start'] <= current_end:
-                    # Overlapping clip will be skipped - don't extend the zone
-                    # Keep current_end as-is (first clip's end time)
-                    pass
+                if clip['start'] <= current_zone_end:
+                    # Overlapping clip - absorb it, don't extend the zone
+                    absorbed_clips.append(clip)
+                    print(f"  -> Clip {os.path.basename(clip['path'])} absorbed into zone (overlaps)")
                 else:
-                    # Any gap = separate zone = jump cut
-                    audio_zones.append({'start': current_start, 'end': current_end})
-                    current_start = clip['start']
-                    current_end = clip['end']
-            audio_zones.append({'start': current_start, 'end': current_end})
+                    # Gap found - save current zone and start new one
+                    audio_zones.append({
+                        'start': current_zone_start,
+                        'end': current_zone_end,
+                        'primary_clip': current_primary_clip
+                    })
+                    primary_clips.append(current_primary_clip)
+                    current_zone_start = clip['start']
+                    current_zone_end = clip['end']
+                    current_primary_clip = clip
+
+            # Don't forget the last zone
+            audio_zones.append({
+                'start': current_zone_start,
+                'end': current_zone_end,
+                'primary_clip': current_primary_clip
+            })
+            primary_clips.append(current_primary_clip)
+
+        print(f"\nMerged Audio Zones ({len(audio_zones)} zones):")
+        for i, zone in enumerate(audio_zones):
+            print(f"  Zone {i}: [{zone['start']:.2f}s - {zone['end']:.2f}s] ({zone['end'] - zone['start']:.2f}s)")
+            print(f"           Primary clip: {os.path.basename(zone['primary_clip']['path'])}")
+
+        print(f"\nPrimary clips (will be used): {len(primary_clips)}")
+        print(f"Absorbed clips (will be skipped): {len(absorbed_clips)}")
+        for ac in absorbed_clips:
+            print(f"  - {os.path.basename(ac['path'])} at {ac['start']:.2f}s")
 
         # --- Phase 2: Refine EDL (Intersect Action with Audio Zones) ---
+        print("\n" + "="*60)
+        print("DEBUG: Phase 2 - Refine EDL (Intersect with Audio Zones)")
+        print("="*60)
+
         refined_segments = []
         if not audio_zones:
-            refined_segments = initial_segments
+            refined_segments = [{'start': s['start'], 'end': s['end'], 'primary_clip': None} for s in initial_segments]
+            print("\nNo audio zones - using initial EDL segments as-is")
         else:
             for seg in initial_segments:
                 seg_start = seg['start']
@@ -82,70 +139,75 @@ class VideoEditingService:
                     inter_start = max(seg_start, zone['start'])
                     inter_end = min(seg_end, zone['end'])
                     if inter_start < inter_end:
-                        refined_segments.append({'start': inter_start, 'end': inter_end})
+                        refined_segments.append({
+                            'start': inter_start,
+                            'end': inter_end,
+                            'primary_clip': zone['primary_clip']
+                        })
 
         if not refined_segments:
              print("Warning: Refined EDL resulted in empty video. Falling back to original EDL.")
-             refined_segments = initial_segments
+             refined_segments = [{'start': s['start'], 'end': s['end'], 'primary_clip': None} for s in initial_segments]
+
+        print(f"\nRefined EDL Segments ({len(refined_segments)} segments):")
+        total_duration = 0
+        for i, seg in enumerate(refined_segments):
+            seg_dur = seg['end'] - seg['start']
+            total_duration += seg_dur
+            clip_name = os.path.basename(seg['primary_clip']['path']) if seg.get('primary_clip') else 'None'
+            print(f"  Segment {i}: [{seg['start']:.2f}s - {seg['end']:.2f}s] ({seg_dur:.2f}s) -> {clip_name}")
+        print(f"\nTotal refined duration: {total_duration:.2f}s")
 
         keep_segments = refined_segments
 
-        # --- Phase 3: Timestamp Mapping ---
-        mapped_audio_clips = []
+        # --- Phase 3: Simple Sequential Audio Placement ---
+        # Each refined segment has ONE primary audio clip that plays at segment start
+        print("\n" + "="*60)
+        print("DEBUG: Phase 3 - Sequential Audio Placement")
+        print("="*60)
+
+        final_audio_clips = []
+        kept_audio_paths = set()
         current_edit_time = 0.0
         segment_mappings = []
 
-        for seg in keep_segments:
-            duration = seg['end'] - seg['start']
+        print(f"\nPlacing audio clips sequentially...")
+
+        for i, seg in enumerate(keep_segments):
+            seg_duration = seg['end'] - seg['start']
             segment_mappings.append({
                 'orig_start': seg['start'],
                 'orig_end': seg['end'],
                 'edit_start': current_edit_time
             })
-            current_edit_time += duration
+
+            primary_clip = seg.get('primary_clip')
+            if primary_clip:
+                audio_name = os.path.basename(primary_clip['path'])
+                audio_duration = primary_clip['duration']
+
+                final_audio_clips.append({
+                    'path': primary_clip['path'],
+                    'delay': int(current_edit_time * 1000)  # ms
+                })
+                kept_audio_paths.add(primary_clip['path'])
+
+                print(f"  Segment {i}: edit_start={current_edit_time:.2f}s")
+                print(f"    ✓ Audio: {audio_name}")
+                print(f"      Delay: {int(current_edit_time * 1000)}ms, Duration: {audio_duration:.2f}s")
+                print(f"      Original ts: {primary_clip['orig_ts']:.2f}s")
+            else:
+                print(f"  Segment {i}: edit_start={current_edit_time:.2f}s (no audio)")
+
+            current_edit_time += seg_duration
 
         total_edited_duration = current_edit_time
 
-        for clip in commentary_data.get('commentary', []):
-            if not clip.get('audio_path'):
-                continue
-            ts = float(clip['timestamp'])
-
-            # Map timestamp
-            mapped_ts = -1
-            for mapping in segment_mappings:
-                if mapping['orig_start'] <= ts <= mapping['orig_end']:
-                    offset = ts - mapping['orig_start']
-                    mapped_ts = mapping['edit_start'] + offset
-                    break
-
-            if mapped_ts >= 0:
-                mapped_audio_clips.append({
-                    'path': clip['audio_path'],
-                    'start': mapped_ts
-                })
-
-        # --- Phase 4: Overlap Prevention with 1s Allowance ---
-        mapped_audio_clips.sort(key=lambda x: x['start'])
-        final_audio_clips = []
-        kept_audio_paths = set()  # Track which audio clips are kept for captions
-        last_end_time = 0.0
-
-        for clip in mapped_audio_clips:
-            duration = VideoEditingService._get_audio_duration(clip['path'])
-            start_time = clip['start']
-
-            # Allow 1.0s overlap
-            if start_time < (last_end_time - 1.0):
-                print(f"Skipping overlapping commentary clip at {start_time}s")
-                continue
-
-            final_audio_clips.append({
-                'path': clip['path'],
-                'delay': int(start_time * 1000) # ms
-            })
-            kept_audio_paths.add(clip['path'])
-            last_end_time = start_time + duration
+        print(f"\n--- Summary ---")
+        print(f"Total segments: {len(keep_segments)}")
+        print(f"Audio clips placed: {len(final_audio_clips)}")
+        print(f"Total edited duration: {total_edited_duration:.2f}s")
+        print("="*60 + "\n")
 
         # === Phase 5: Multi-Step Rendering to prevent OOM ===
         temp_voice_path = output_path + ".voice.wav"
@@ -349,8 +411,9 @@ class VideoEditingService:
     @staticmethod
     def _build_peter_overlay_filter(segment_index, segment_duration, is_first_segment):
         """
-        Build FFmpeg filter for Peter Griffin overlay.
+        Build FFmpeg filter for scaling video to target dimensions and adding Peter Griffin overlay.
 
+        - Video is scaled to fill 1080x1920 (portrait), cropping excess
         - Peter peeks from the sides of the screen with rotation
         - Left side: +30 degrees rotation, peeks from left edge
         - Right side: -30 degrees rotation (flipped), peeks from right edge
@@ -367,6 +430,10 @@ class VideoEditingService:
         """
         import math
 
+        # Target dimensions
+        out_w = VideoEditingService.OUTPUT_WIDTH
+        out_h = VideoEditingService.OUTPUT_HEIGHT
+
         scale = VideoEditingService.PETER_SCALE
         rotation_deg = VideoEditingService.PETER_ROTATION_DEG
         peek_amount = VideoEditingService.PETER_PEEK_AMOUNT
@@ -378,6 +445,14 @@ class VideoEditingService:
 
         # Determine position: even segments = left, odd segments = right
         is_left = (segment_index % 2 == 0)
+
+        # Scale and crop filter to enforce output dimensions
+        # scale2ref scales to fill the target, then crop centers it
+        # Using scale with force_original_aspect_ratio=increase to fill, then crop to exact size
+        scale_crop_filter = (
+            f"[0:v]scale={out_w}:{out_h}:force_original_aspect_ratio=increase,"
+            f"crop={out_w}:{out_h}[scaled]"
+        )
 
         # Build the peter image filter chain:
         # 1. Scale
@@ -458,13 +533,14 @@ class VideoEditingService:
             gamma_expr = f"{initial_gamma}+(1-{initial_gamma})*{circ_out_expr}"
 
             overlay_filter = (
+                f"{scale_crop_filter};"
                 f"{peter_filter};"
-                f"[0:v][peter]overlay=x={x_animated}:y={y_pos},"
+                f"[scaled][peter]overlay=x={x_animated}:y={y_pos},"
                 f"eq=brightness={brightness_expr}:gamma={gamma_expr}:eval=frame[v_out]"
             )
         else:
             # Static position
-            overlay_filter = f"{peter_filter};[0:v][peter]overlay=x={x_final}:y={y_pos}[v_out]"
+            overlay_filter = f"{scale_crop_filter};{peter_filter};[scaled][peter]overlay=x={x_final}:y={y_pos}[v_out]"
 
         return overlay_filter
 

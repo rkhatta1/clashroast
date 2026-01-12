@@ -6,16 +6,17 @@ db = SQLAlchemy()
 
 class Video(db.Model):
     __tablename__ = 'videos'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     filename = db.Column(db.String(255), nullable=False)
     duration = db.Column(db.Float)
     status = db.Column(db.String(50), default='pending')  # pending, processing, completed, failed
+    deck_description = db.Column(db.Text)  # User-provided description of their deck
     edl = db.Column(JSON)  # Edit Decision List: [{"start": 0, "end": 10}, ...]
     final_video_path = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     # Relationships
     frame_batches = db.relationship('FrameBatch', backref='video', cascade='all, delete-orphan')
     commentary = db.relationship('Commentary', backref='video', uselist=False, cascade='all, delete-orphan')

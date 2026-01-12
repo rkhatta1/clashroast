@@ -1,14 +1,23 @@
-def get_frame_analysis_prompt(timestamps):
+def get_frame_analysis_prompt(timestamps, deck_description=None):
     """
     Generate prompt for frame batch analysis.
-    
+
     Args:
         timestamps: List of formatted timestamps (e.g., ['0:05', '0:06', ...])
+        deck_description: Optional user-provided description of their deck
     """
+    deck_context = ""
+    if deck_description:
+        deck_context = f"""
+**PLAYER'S DECK:**
+The player (bottom of screen) is using the following deck: {deck_description}
+Use this information to better identify cards being played and provide context.
+"""
+
     return f"""You are analyzing {len(timestamps)} consecutive frames from a Clash Royale match at timestamps: {', '.join(timestamps)}.
 
 The frames are provided in chronological order. Analyze each frame carefully and extract match events according to the provided schema.
-
+{deck_context}
 For EACH frame, identify:
 1. **Elixir count** for the bottom player (read the pink/purple elixir bar - count the filled segments).
 2. **Match timer** in the top center (format M:SS or MM:SS).

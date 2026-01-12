@@ -55,19 +55,20 @@ class GeminiService:
             text = response.text.replace('```json', '').replace('```', '').strip()
             return json.loads(text)
     
-    def analyze_frame_batch(self, frame_batch_info):
+    def analyze_frame_batch(self, frame_batch_info, deck_description=None):
         """
         Analyze a batch of frames using Gemini.
-        
+
         Args:
             frame_batch_info: List of dicts with 'path' and 'formatted_time'
+            deck_description: Optional user-provided description of their deck
         """
         # Prepare content parts
         contents = []
-        
+
         # Add prompt text
         timestamps = [frame['formatted_time'] for frame in frame_batch_info]
-        prompt_text = get_frame_analysis_prompt(timestamps)
+        prompt_text = get_frame_analysis_prompt(timestamps, deck_description)
         contents.append(prompt_text)
         
         # Add images
@@ -150,12 +151,17 @@ class GeminiService:
             text = response.text.replace('```json', '').replace('```', '').strip()
             return json.loads(text)
 
-    def generate_commentary(self, merged_events):
+    def generate_commentary(self, merged_events, deck_description=None):
         """
         Generate first-person commentary using Gemini Pro.
+
+        Args:
+            merged_events: Merged frame analysis events
+            deck_description: Optional user-provided description of their deck
+
         Returns: Dict with 'commentary' list of {timestamp, text}.
         """
-        prompt = get_commentary_prompt(merged_events)
+        prompt = get_commentary_prompt(merged_events, deck_description)
         
         response_schema = {
             'type': 'OBJECT',

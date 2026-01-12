@@ -67,9 +67,9 @@ def process_video_task(self, video_id):
             db.session.commit()
 
             # Step 4: Process batches in parallel with Celery
-            # Define the group of analysis tasks
+            # Define the group of analysis tasks (pass deck_description for context)
             analysis_group = group(
-                analyze_frame_batch_task.s(batch_id) for batch_id in batch_ids
+                analyze_frame_batch_task.s(batch_id, video.deck_description) for batch_id in batch_ids
             )
 
             # Step 5: Chain the group with the merge task
@@ -89,7 +89,7 @@ def process_video_task(self, video_id):
             raise
 
 @celery.task(bind=True)
-def analyze_frame_batch_task(self, batch_id):
+def analyze_frame_batch_task(self, batch_id, deck_description=None):
     """Analyze a single frame batch with Gemini Flash."""
     from app import create_app
     app = create_app()
@@ -109,9 +109,9 @@ def analyze_frame_batch_task(self, batch_id):
                 for path, ts in zip(batch.frame_paths, batch.timestamps)
             ]
 
-            # Call Gemini
+            # Call Gemini with deck context
             gemini = GeminiService()
-            response = gemini.analyze_frame_batch(frame_info)
+            response = gemini.analyze_frame_batch(frame_info, deck_description)
 
             # Save response
             batch.analysis_response = response
@@ -165,7 +165,7 @@ def merge_and_generate_commentary_task(self, video_id):
             # --- Generate Commentary ---
             # This now returns a dict {'commentary': [{'timestamp': x, 'text': y}, ...]}
             gemini = GeminiService()
-            commentary_data = gemini.generate_commentary(filtered_events)
+            commentary_data = gemini.generate_commentary(filtered_events, video.deck_description)
 
             # Extract plain text for simple display
             full_text = " ".join([c['text'] for c in commentary_data.get('commentary', [])])
