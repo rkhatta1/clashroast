@@ -59,4 +59,9 @@ class Config:
     SFX_START = 'thump.wav'  # Played at start of video
     SFX_END = 'get_out.wav'  # Played at end of video
     SFX_START_END_VOLUME = 0.8  # 80% volume for start/end SFX
-    SFX_INTERMEDIATE_VOLUME = 0.45  # 65% volume for intermediate SFX
+    SFX_INTERMEDIATE_VOLUME = 0.3  # 30% volume for intermediate SFX
+
+    # Google Cloud Speech-to-Text
+    STT_ENABLED = os.getenv('STT_ENABLED', 'true').lower() == 'true'
+    STT_LANGUAGE = os.getenv('STT_LANGUAGE', 'en-US')
+    STT_MODEL = os.getenv('STT_MODEL', 'long')  # 'long', 'short', 'chirp_3', etc.

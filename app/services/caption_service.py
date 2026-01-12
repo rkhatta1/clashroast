@@ -31,7 +31,8 @@ class CaptionService:
     @staticmethod
     def estimate_word_timestamps(structured_commentary, segment_mappings, kept_audio_paths=None):
         """
-        Estimate word-chunk timestamps from commentary segments.
+        Get word-chunk timestamps from commentary segments.
+        Uses Google Cloud STT for accurate word timing, with fallback to estimation.
 
         Args:
             structured_commentary: Dict with 'commentary' list of {timestamp, text, audio_path}
@@ -43,6 +44,16 @@ class CaptionService:
             List of {text, start, end} with timestamps in the EDITED video timeline
         """
         all_chunks = []
+
+        # Initialize STT service if enabled
+        stt_service = None
+        if Config.STT_ENABLED:
+            try:
+                from app.services.stt_service import STTService
+                stt_service = STTService()
+                print("STT: Service initialized, will use Google Cloud STT for word timestamps")
+            except Exception as e:
+                print(f"STT: Failed to initialize service, falling back to estimation: {e}")
 
         commentary_list = structured_commentary.get('commentary', [])
 
@@ -58,40 +69,85 @@ class CaptionService:
             if kept_audio_paths is not None and audio_path not in kept_audio_paths:
                 continue
 
-            # Get audio duration
-            audio_duration = CaptionService.get_audio_duration(audio_path)
-            if audio_duration <= 0:
-                continue
-
-            # Split text into words
-            words = text.split()
-            if not words:
-                continue
-
             # Map original timestamp to edited timeline
             mapped_start = CaptionService._map_timestamp(orig_timestamp, segment_mappings)
             if mapped_start < 0:
                 # Segment was cut from final video
                 continue
 
-            # Group words into chunks of WORDS_PER_CHUNK
-            chunks = CaptionService._chunk_words(words, CaptionService.WORDS_PER_CHUNK)
+            # Try STT first for accurate word timestamps
+            chunks = None
+            if stt_service:
+                word_timestamps = stt_service.get_word_timestamps(audio_path)
+                if word_timestamps:
+                    # Group words into chunks and offset by mapped_start
+                    stt_chunks = stt_service.group_words_into_chunks(
+                        word_timestamps,
+                        CaptionService.WORDS_PER_CHUNK
+                    )
+                    # Offset chunk times to edited timeline
+                    chunks = []
+                    for chunk in stt_chunks:
+                        chunks.append({
+                            'text': chunk['text'],
+                            'start': mapped_start + chunk['start'],
+                            'end': mapped_start + chunk['end']
+                        })
 
-            # Calculate time per chunk
-            time_per_chunk = audio_duration / len(chunks)
+            # Fallback to estimation if STT failed or not available
+            if chunks is None:
+                chunks = CaptionService._estimate_chunks(
+                    text, audio_path, mapped_start
+                )
 
-            # Generate chunk timestamps
-            current_time = mapped_start
-            for chunk in chunks:
-                chunk_text = ' '.join(chunk)
-                all_chunks.append({
-                    'text': chunk_text,
-                    'start': current_time,
-                    'end': current_time + time_per_chunk
-                })
-                current_time += time_per_chunk
+            if chunks:
+                all_chunks.extend(chunks)
 
         return all_chunks
+
+    @staticmethod
+    def _estimate_chunks(text, audio_path, mapped_start):
+        """
+        Estimate word-chunk timestamps using linear distribution.
+        Fallback method when STT is unavailable.
+
+        Args:
+            text: The text to chunk
+            audio_path: Path to audio file for duration
+            mapped_start: Start time in edited timeline
+
+        Returns:
+            List of {text, start, end}
+        """
+        # Get audio duration
+        audio_duration = CaptionService.get_audio_duration(audio_path)
+        if audio_duration <= 0:
+            return []
+
+        # Split text into words
+        words = text.split()
+        if not words:
+            return []
+
+        # Group words into chunks of WORDS_PER_CHUNK
+        word_chunks = CaptionService._chunk_words(words, CaptionService.WORDS_PER_CHUNK)
+
+        # Calculate time per chunk
+        time_per_chunk = audio_duration / len(word_chunks)
+
+        # Generate chunk timestamps
+        chunks = []
+        current_time = mapped_start
+        for chunk in word_chunks:
+            chunk_text = ' '.join(chunk)
+            chunks.append({
+                'text': chunk_text,
+                'start': current_time,
+                'end': current_time + time_per_chunk
+            })
+            current_time += time_per_chunk
+
+        return chunks
 
     @staticmethod
     def _chunk_words(words, chunk_size):
