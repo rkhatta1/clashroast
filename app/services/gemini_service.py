@@ -1,10 +1,22 @@
 from google import genai
 from google.genai import types
 import json
+import logging
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception,
+)
 from app.config import Config
 from app.prompts.frame_analysis import get_frame_analysis_prompt
 from app.prompts.commentary import get_commentary_prompt
 from app.prompts.edl import get_edl_prompt
+
+def is_retryable_error(exception):
+    # Check for overloaded/rate limit strings in the exception message
+    error_msg = str(exception).lower()
+    return "503" in error_msg or "overloaded" in error_msg or "429" in error_msg
 
 class GeminiService:
     def __init__(self):
@@ -12,7 +24,11 @@ class GeminiService:
         self.client = genai.Client(
             api_key=Config.GEMINI_API_KEY
         )
-
+    @retry(
+        retry=retry_if_exception(is_retryable_error),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(3)
+    )
     def generate_edl(self, merged_events, total_duration):
         """
         Generate Edit Decision List using Gemini.
@@ -55,6 +71,12 @@ class GeminiService:
             text = response.text.replace('```json', '').replace('```', '').strip()
             return json.loads(text)
     
+    @retry(
+        retry=retry_if_exception(is_retryable_error),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(5),
+        before_sleep=lambda retry_state: print(f"Gemini overloaded, retrying... (Attempt {retry_state.attempt_number})")
+    )
     def analyze_frame_batch(self, frame_batch_info, deck_description=None):
         """
         Analyze a batch of frames using Gemini.
@@ -158,6 +180,11 @@ class GeminiService:
             text = response.text.replace('```json', '').replace('```', '').strip()
             return json.loads(text)
 
+    @retry(
+        retry=retry_if_exception(is_retryable_error),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        stop=stop_after_attempt(3)
+    )
     def generate_commentary(self, merged_events, deck_description=None, video_duration=None, character='peter'):
         """
         Generate first-person commentary using Gemini Pro.
