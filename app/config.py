@@ -3,21 +3,25 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Base directory for the application
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+
+
 class Config:
     # Flask
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key')
-    
+
     # Database
     SQLALCHEMY_DATABASE_URI = os.getenv(
         'DATABASE_URL',
         'postgresql://cruser:crpassword@localhost:5433/clash_royale_db'
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    
-    # Celery
+
+    # Celery (for local development)
     CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6380/0')
     CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6380/0')
-    
+
     # Google Cloud / Vertex AI
     GCP_PROJECT_ID = os.getenv('GCP_PROJECT_ID')
     GCP_LOCATION = os.getenv('GCP_LOCATION', 'us-central1')
@@ -31,19 +35,23 @@ class Config:
     FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
     MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
 
-    # Video Processing
-    VIDEOS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'videos')
-    FRAMES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'frames')
+    # Video Processing Directories
+    VIDEOS_DIR = os.path.join(BASE_DIR, 'videos')
+    FRAMES_DIR = os.path.join(BASE_DIR, 'frames')
+    AUDIO_DIR = os.path.join(BASE_DIR, 'audio')
+    OUTPUT_DIR = os.path.join(BASE_DIR, 'outputs')
+
+    # Frame extraction settings
     FRAMES_PER_SECOND = 1
     FRAMES_PER_BATCH = 5
-    
+
     # Gemini Models
     GEMINI_FLASH_MODEL = 'gemini-3-flash-preview'
     GEMINI_PRO_MODEL = 'gemini-3-pro-preview'
-    
+
     # Fish Audio
     FISH_API_KEY = os.getenv('FISH_API_KEY')
-    FISH_VOICE_ID = os.getenv('FISH_VOICE', '933563129e564b19a115bedd57b7406a') # Default to Sarah if not set
+    FISH_VOICE_ID = os.getenv('FISH_VOICE', '933563129e564b19a115bedd57b7406a')
 
     # Character Voice Mappings
     CHARACTER_VOICES = {
@@ -55,26 +63,30 @@ class Config:
 
     # Default character
     DEFAULT_CHARACTER = 'peter'
-    
-    # Storage
-    AUDIO_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'audio')
-    OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'outputs')
 
-    # Overlay Assets
-    PETER_PNG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'peter.png')
+    # Assets Directory (for Docker, this will be /app/assets)
+    ASSETS_DIR = os.getenv('ASSETS_DIR', os.path.join(BASE_DIR, 'assets'))
 
-    # Character overlay images
+    # Character overlay images (use assets directory)
+    @classmethod
+    def get_character_image_path(cls, character: str) -> str:
+        """Get the path to a character overlay image."""
+        return os.path.join(cls.ASSETS_DIR, 'characters', f'{character}.png')
+
+    # Legacy paths for backward compatibility
+    PETER_PNG_PATH = property(lambda self: self.get_character_image_path('peter'))
+
     CHARACTER_IMAGES = {
-        'peter': os.path.join(os.path.dirname(os.path.dirname(__file__)), 'peter.png'),
-        'spongebob': os.path.join(os.path.dirname(os.path.dirname(__file__)), 'spongebob.png'),
-        'drake': os.path.join(os.path.dirname(os.path.dirname(__file__)), 'drake.png'),
-        'joerogan': os.path.join(os.path.dirname(os.path.dirname(__file__)), 'joerogan.png'),
+        'peter': os.path.join(os.getenv('ASSETS_DIR', os.path.join(BASE_DIR, 'assets')), 'characters', 'peter.png'),
+        'spongebob': os.path.join(os.getenv('ASSETS_DIR', os.path.join(BASE_DIR, 'assets')), 'characters', 'spongebob.png'),
+        'drake': os.path.join(os.getenv('ASSETS_DIR', os.path.join(BASE_DIR, 'assets')), 'characters', 'drake.png'),
+        'joerogan': os.path.join(os.getenv('ASSETS_DIR', os.path.join(BASE_DIR, 'assets')), 'characters', 'joerogan.png'),
     }
 
     # Character-specific overlay settings
     CHARACTER_OVERLAY_SETTINGS = {
         'peter': {'scale': 2.0, 'flip_orientation': False},
-        'spongebob': {'scale': 1.0, 'flip_orientation': True},  # Image is pre-flipped
+        'spongebob': {'scale': 1.0, 'flip_orientation': True},
         'drake': {'scale': 1.0, 'flip_orientation': False},
         'joerogan': {'scale': 1.5, 'flip_orientation': False},
     }
@@ -85,22 +97,51 @@ class Config:
 
     # Caption Styling
     CAPTION_FONT = 'Poppins'
-    CAPTION_FONT_SIZE = 125  # Large for word chunk pop
-    CAPTION_COLOR = 'AAFF00'  # Lime green (BGR format for ASS: 00FFAA)
-    CAPTION_OUTLINE_COLOR = '000000'  # Black outline
-    CAPTION_OUTLINE_WIDTH = 6  # Thicker outline for bolder look
-    CAPTION_POSITION_Y = 40  # Percentage from top (40% = upper-center, avoids Peter)
-    CAPTION_POP_DURATION_MS = 100  # Duration of pop-in animation
-    CAPTION_BOUNCE_SCALE = 110  # Overshoot scale percentage
+    CAPTION_FONT_SIZE = 125
+    CAPTION_COLOR = 'AAFF00'
+    CAPTION_OUTLINE_COLOR = '000000'
+    CAPTION_OUTLINE_WIDTH = 6
+    CAPTION_POSITION_Y = 40
+    CAPTION_POP_DURATION_MS = 100
+    CAPTION_BOUNCE_SCALE = 110
 
-    # Sound Effects
-    SFX_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'audio', 'sfx')
-    SFX_START = 'thump.wav'  # Played at start of video
-    SFX_END = 'get_out.wav'  # Played at end of video
-    SFX_START_END_VOLUME = 0.8  # 80% volume for start/end SFX
-    SFX_INTERMEDIATE_VOLUME = 0.3  # 30% volume for intermediate SFX
+    # Sound Effects (use assets directory)
+    SFX_DIR = os.path.join(os.getenv('ASSETS_DIR', os.path.join(BASE_DIR, 'assets')), 'sfx')
+    SFX_START = 'thump.wav'
+    SFX_END = 'get_out.wav'
+    SFX_START_END_VOLUME = 0.8
+    SFX_INTERMEDIATE_VOLUME = 0.3
 
     # Google Cloud Speech-to-Text
     STT_ENABLED = os.getenv('STT_ENABLED', 'true').lower() == 'true'
     STT_LANGUAGE = os.getenv('STT_LANGUAGE', 'en-US')
-    STT_MODEL = os.getenv('STT_MODEL', 'long')  # 'long', 'short', 'chirp_3', etc.
+    STT_MODEL = os.getenv('STT_MODEL', 'long')
+
+
+class ProductionConfig(Config):
+    """Production configuration for VM deployment."""
+
+    DEBUG = False
+
+    # In production, DATABASE_URL should be set via environment
+    # pointing to the local PostgreSQL on the VM
+
+    # CORS for Vercel frontend
+    FRONTEND_URL = os.getenv('FRONTEND_URL', 'https://clashroast.vercel.app')
+
+    # In Cloud Run Jobs, assets are at /app/assets
+    ASSETS_DIR = os.getenv('ASSETS_DIR', '/app/assets')
+
+
+class DevelopmentConfig(Config):
+    """Development configuration."""
+
+    DEBUG = True
+
+
+def get_config():
+    """Get the appropriate config based on FLASK_ENV."""
+    env = os.getenv('FLASK_ENV', 'development')
+    if env == 'production':
+        return ProductionConfig()
+    return DevelopmentConfig()

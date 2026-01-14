@@ -1,7 +1,8 @@
 from flask import Blueprint, request, jsonify
 from app.models import db, Video, FrameBatch, Commentary
-from app.tasks import process_video_task
+from app.services.job_trigger import trigger_video_processing
 from app.services.gcs_service import gcs_service
+from app.middleware import rate_limit
 from app.config import Config
 import os
 
@@ -33,6 +34,7 @@ def get_characters():
     return jsonify({'characters': characters, 'default': Config.DEFAULT_CHARACTER})
 
 @api.route('/upload/init', methods=['POST'])
+@rate_limit(max_requests=5, window=60)  # 5 uploads per minute
 def init_upload():
     """
     Initialize a resumable upload session.
@@ -109,7 +111,7 @@ def create_video():
 
     # Start processing ONLY if pending (upload complete)
     if video.status == 'pending':
-        process_video_task.delay(video.id)
+        trigger_video_processing(str(video.id))
 
     return jsonify({
         'id': video.id,
@@ -139,7 +141,7 @@ def start_processing(video_id):
     video.status = 'pending'
     db.session.commit()
 
-    process_video_task.delay(video.id)
+    trigger_video_processing(str(video.id))
 
     return jsonify({
         'id': video.id,

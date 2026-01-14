@@ -1,0 +1,55 @@
+# Git
+.git
+.gitignore
+
+# Environment files
+.env
+.env.*
+.env.local
+.env.production
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv
+venv/
+*.egg-info/
+.eggs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local development files
+docker-compose.yml
+logs.md
+INIT-PLAN.md
+*.log
+
+# Media files (will be in GCS)
+videos/*
+frames/*
+outputs/*
+audio/*.wav
+audio/*.mp3
+!audio/sfx/
+
+# Large base images (not needed, only processed ones)
+*_base.png
+
+# Test files
+tests/
+*.test.py
+
+# Claude/AI
+.claude/
+
+# Misc
+*.jpg
+*.jpeg
+captions.jpg
