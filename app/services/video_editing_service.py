@@ -51,6 +51,7 @@ class VideoEditingService:
                 '-ss', str(timestamp),
                 '-i', video_path,
                 '-vframes', '1',
+                '-update', '1',
                 '-q:v', '2',  # High quality jpeg
                 output_path
             ]
