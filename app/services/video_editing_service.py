@@ -10,11 +10,11 @@ class VideoEditingService:
     OUTPUT_WIDTH = Config.OUTPUT_WIDTH
     OUTPUT_HEIGHT = Config.OUTPUT_HEIGHT
 
-    # Peter Griffin overlay settings
-    PETER_SCALE = 2.0   # Scale factor for the overlay
-    PETER_ROTATION_DEG = 30  # Rotation angle in degrees (positive = counterclockwise)
-    PETER_PEEK_AMOUNT = 0.6  # How much of Peter is visible (0.6 = 60% visible, 40% off-screen)
-    PETER_Y_POSITION = 0.65  # Vertical position (0.55 = 55% down the screen)
+    # Default character overlay settings (used if character not in config)
+    DEFAULT_OVERLAY_SCALE = 2.0
+    OVERLAY_ROTATION_DEG = 30  # Rotation angle in degrees (positive = counterclockwise)
+    OVERLAY_PEEK_AMOUNT = 0.6  # How much of character is visible (0.6 = 60% visible, 40% off-screen)
+    OVERLAY_Y_POSITION = 0.65  # Vertical position (0.65 = 65% down the screen)
     INTRO_SLIDE_DURATION = 0.4  # Duration of slide-in animation in seconds
 
     # Flash-in effect settings
@@ -23,7 +23,63 @@ class VideoEditingService:
     FLASH_INITIAL_GAMMA = 0.5  # Starting gamma (lower = brighter highlights)
 
     @staticmethod
-    def render_final_video(video_path, edl, commentary_data, output_path):
+    def extract_thumbnail(video_path, output_path, timestamp=None):
+        """
+        Extract a thumbnail from the video.
+
+        Args:
+            video_path: Path to the source video
+            output_path: Path to save the thumbnail
+            timestamp: Time in seconds (optional). If None, takes a frame from 20% into the video.
+        """
+        try:
+            if timestamp is None:
+                # Get duration first
+                cmd_dur = [
+                    'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+                    '-of', 'default=noprint_wrappers=1:nokey=1', video_path
+                ]
+                result = subprocess.run(cmd_dur, capture_output=True, text=True, check=True)
+                try:
+                    duration = float(result.stdout.strip())
+                    timestamp = duration * 0.2  # 20% point often has good action
+                except ValueError:
+                    timestamp = 0.0 # Fallback
+
+            cmd = [
+                'ffmpeg', '-y',
+                '-ss', str(timestamp),
+                '-i', video_path,
+                '-vframes', '1',
+                '-q:v', '2',  # High quality jpeg
+                output_path
+            ]
+            subprocess.run(cmd, check=True)
+            return output_path
+        except Exception as e:
+            print(f"Thumbnail extraction failed: {e}")
+            raise
+
+    @staticmethod
+    def get_character_image_path(character=None):
+        """Get the overlay image path for a character."""
+        if character and character in Config.CHARACTER_IMAGES:
+            path = Config.CHARACTER_IMAGES[character]
+            if os.path.exists(path):
+                return path
+        # Fallback to peter
+        return Config.PETER_PNG_PATH
+
+    @staticmethod
+    def get_character_overlay_settings(character=None):
+        """Get overlay settings (scale, flip_orientation) for a character."""
+        if character and character in Config.CHARACTER_OVERLAY_SETTINGS:
+            return Config.CHARACTER_OVERLAY_SETTINGS[character]
+        # Default settings
+        return {'scale': VideoEditingService.DEFAULT_OVERLAY_SCALE, 'flip_orientation': False}
+
+    @staticmethod
+    def render_final_video(video_path, edl, commentary_data, output_path, character=None):
         """
         Cut the video according to EDL and mix with timestamped commentary clips.
         Refines EDL to trim gaps larger than 2s between audio clips.
@@ -39,9 +95,13 @@ class VideoEditingService:
             raise ValueError("EDL is empty, cannot render video.")
         initial_segments.sort(key=lambda x: x['start'])
 
+        # Calculate max video duration from EDL
+        max_video_time = max(seg['end'] for seg in initial_segments)
+
         print(f"\nInitial EDL Segments ({len(initial_segments)} segments):")
         for i, seg in enumerate(initial_segments):
             print(f"  Segment {i}: [{seg['start']:.2f}s - {seg['end']:.2f}s] ({seg['end'] - seg['start']:.2f}s)")
+        print(f"\nMax video duration: {max_video_time:.2f}s")
 
         # --- Phase 1: Calculate Audio Activity Zones (Original Timeline) ---
         print("\n" + "="*60)
@@ -50,11 +110,22 @@ class VideoEditingService:
 
         # Collect audio clips with their info
         audio_clips = []
+        skipped_clips = []
         for clip in commentary_data.get('commentary', []):
             if not clip.get('audio_path'):
                 continue
 
             ts = float(clip['timestamp'])
+
+            # Filter out clips that start beyond video duration
+            if ts >= max_video_time:
+                skipped_clips.append({
+                    'path': clip['audio_path'],
+                    'timestamp': ts,
+                    'reason': f'timestamp {ts:.2f}s exceeds video duration {max_video_time:.2f}s'
+                })
+                continue
+
             duration = VideoEditingService._get_audio_duration(clip['audio_path'])
 
             # Define Active Zone (Exact Audio Duration)
@@ -68,6 +139,11 @@ class VideoEditingService:
                 'orig_ts': ts,
                 'duration': duration
             })
+
+        if skipped_clips:
+            print(f"\nWARNING: Skipped {len(skipped_clips)} clips with timestamps exceeding video duration:")
+            for sc in skipped_clips:
+                print(f"  - {os.path.basename(sc['path'])}: {sc['reason']}")
 
         print(f"\nAudio Clips (before merging): {len(audio_clips)}")
         for i, ac in enumerate(audio_clips):
@@ -273,12 +349,16 @@ class VideoEditingService:
             subprocess.run(cmd_voice, check=True)
 
             # Step 2: Render Stitched Video (Sequential Clips + Concat Demuxer)
-            # Each segment gets Peter Griffin overlay with alternating positions
-            print("Rendering Stitched Video with Peter Griffin overlay...")
+            # Each segment gets character overlay with alternating positions
+            character_name = character or 'peter'
+            print(f"Rendering Stitched Video with {character_name} overlay...")
 
             segment_files = []
             segment_list_path = output_path + ".segments.txt"
-            peter_path = Config.PETER_PNG_PATH
+            overlay_path = VideoEditingService.get_character_image_path(character)
+            overlay_settings = VideoEditingService.get_character_overlay_settings(character)
+            print(f"Using overlay image: {overlay_path}")
+            print(f"Overlay settings: scale={overlay_settings['scale']}, flip_orientation={overlay_settings['flip_orientation']}")
 
             for i, seg in enumerate(keep_segments):
                 start = seg['start']
@@ -289,10 +369,12 @@ class VideoEditingService:
                 segment_files.append(seg_filename)
 
                 # Build overlay filter for this segment
-                overlay_filter = VideoEditingService._build_peter_overlay_filter(
+                overlay_filter = VideoEditingService._build_character_overlay_filter(
                     segment_index=i,
                     segment_duration=duration,
-                    is_first_segment=(i == 0)
+                    is_first_segment=(i == 0),
+                    scale=overlay_settings['scale'],
+                    flip_orientation=overlay_settings['flip_orientation']
                 )
 
                 cmd_seg = [
@@ -300,7 +382,7 @@ class VideoEditingService:
                     '-ss', str(start),
                     '-t', str(duration),
                     '-i', video_path,
-                    '-i', peter_path,
+                    '-i', overlay_path,
                     '-filter_complex', overlay_filter,
                     '-map', '[v_out]',
                     '-map', '0:a',
@@ -409,12 +491,12 @@ class VideoEditingService:
         return output_path
 
     @staticmethod
-    def _build_peter_overlay_filter(segment_index, segment_duration, is_first_segment):
+    def _build_character_overlay_filter(segment_index, segment_duration, is_first_segment, scale=None, flip_orientation=False):
         """
-        Build FFmpeg filter for scaling video to target dimensions and adding Peter Griffin overlay.
+        Build FFmpeg filter for scaling video to target dimensions and adding character overlay.
 
         - Video is scaled to fill 1080x1920 (portrait), cropping excess
-        - Peter peeks from the sides of the screen with rotation
+        - Character peeks from the sides of the screen with rotation
         - Left side: +30 degrees rotation, peeks from left edge
         - Right side: -30 degrees rotation (flipped), peeks from right edge
         - First segment: Slide in animation from off-screen
@@ -424,6 +506,8 @@ class VideoEditingService:
             segment_index: Index of the segment (0-based)
             segment_duration: Duration of this segment in seconds
             is_first_segment: Whether this is the first segment (for intro animation)
+            scale: Scale factor for the overlay image (default: DEFAULT_OVERLAY_SCALE)
+            flip_orientation: If True, swap left/right sides (for pre-flipped images like spongebob)
 
         Returns:
             FFmpeg filter_complex string
@@ -434,17 +518,21 @@ class VideoEditingService:
         out_w = VideoEditingService.OUTPUT_WIDTH
         out_h = VideoEditingService.OUTPUT_HEIGHT
 
-        scale = VideoEditingService.PETER_SCALE
-        rotation_deg = VideoEditingService.PETER_ROTATION_DEG
-        peek_amount = VideoEditingService.PETER_PEEK_AMOUNT
-        y_pos_ratio = VideoEditingService.PETER_Y_POSITION
+        if scale is None:
+            scale = VideoEditingService.DEFAULT_OVERLAY_SCALE
+        rotation_deg = VideoEditingService.OVERLAY_ROTATION_DEG
+        peek_amount = VideoEditingService.OVERLAY_PEEK_AMOUNT
+        y_pos_ratio = VideoEditingService.OVERLAY_Y_POSITION
         slide_duration = VideoEditingService.INTRO_SLIDE_DURATION
 
         # Convert degrees to radians for FFmpeg
         rotation_rad = rotation_deg * math.pi / 180
 
         # Determine position: even segments = left, odd segments = right
+        # If flip_orientation is True, swap left and right
         is_left = (segment_index % 2 == 0)
+        if flip_orientation:
+            is_left = not is_left
 
         # Scale and crop filter to enforce output dimensions
         # scale2ref scales to fill the target, then crop centers it
@@ -454,7 +542,7 @@ class VideoEditingService:
             f"crop={out_w}:{out_h}[scaled]"
         )
 
-        # Build the peter image filter chain:
+        # Build the character image filter chain:
         # 1. Scale
         # 2. Rotate (with transparent background, expand canvas to fit rotated image)
         # 3. Flip horizontally if on right side
@@ -465,9 +553,9 @@ class VideoEditingService:
 
         if is_left:
             # Left side: scale, then rotate +30 degrees (counterclockwise tilt)
-            peter_filter = (
+            char_filter = (
                 f"[1:v]scale=iw*{scale}:ih*{scale},"
-                f"rotate={rotation_rad}:c=0x00000000:ow=rotw({rotation_rad}):oh=roth({rotation_rad})[peter]"
+                f"rotate={rotation_rad}:c=0x00000000:ow=rotw({rotation_rad}):oh=roth({rotation_rad})[char]"
             )
             # X position: partially off-screen to the left
             # Final x = -w * (1 - peek_amount), so 60% visible means x = -0.4*w
@@ -476,10 +564,10 @@ class VideoEditingService:
             x_start = "-w"
         else:
             # Right side: scale, flip, then rotate -30 degrees (clockwise tilt)
-            peter_filter = (
+            char_filter = (
                 f"[1:v]scale=iw*{scale}:ih*{scale},"
                 f"hflip,"
-                f"rotate=-{rotation_rad}:c=0x00000000:ow=rotw(-{rotation_rad}):oh=roth(-{rotation_rad})[peter]"
+                f"rotate=-{rotation_rad}:c=0x00000000:ow=rotw(-{rotation_rad}):oh=roth(-{rotation_rad})[char]"
             )
             # X position: partially off-screen to the right
             # Final x = W - w * peek_amount, so 60% visible means x = W - 0.6*w
@@ -488,7 +576,7 @@ class VideoEditingService:
             x_start = "W"
 
         # Y position: centered at y_pos_ratio down the screen
-        # y = H * y_pos_ratio - h/2 (center Peter at that vertical position)
+        # y = H * y_pos_ratio - h/2 (center character at that vertical position)
         y_pos = f"H*{y_pos_ratio}-h/2"
 
         if is_first_segment:
@@ -534,13 +622,13 @@ class VideoEditingService:
 
             overlay_filter = (
                 f"{scale_crop_filter};"
-                f"{peter_filter};"
-                f"[scaled][peter]overlay=x={x_animated}:y={y_pos},"
+                f"{char_filter};"
+                f"[scaled][char]overlay=x={x_animated}:y={y_pos},"
                 f"eq=brightness={brightness_expr}:gamma={gamma_expr}:eval=frame[v_out]"
             )
         else:
             # Static position
-            overlay_filter = f"{scale_crop_filter};{peter_filter};[scaled][peter]overlay=x={x_final}:y={y_pos}[v_out]"
+            overlay_filter = f"{scale_crop_filter};{char_filter};[scaled][char]overlay=x={x_final}:y={y_pos}[v_out]"
 
         return overlay_filter
 

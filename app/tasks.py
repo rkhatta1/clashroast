@@ -7,6 +7,7 @@ from app.services.merge_service import MergeService
 from app.services.editing_service import EditingService
 from app.services.fish_audio_service import FishAudioService
 from app.services.video_editing_service import VideoEditingService
+from app.services.gcs_service import gcs_service
 import os
 
 celery = Celery(
@@ -34,8 +35,25 @@ def process_video_task(self, video_id):
             video.status = 'processing'
             db.session.commit()
 
-            # Step 1: Extract frames
+            # Step 0: Download from GCS if needed
             video_path = os.path.join(Config.VIDEOS_DIR, video.filename)
+
+            if video.gcs_input_uri:
+                # Ensure filename is safe or use a UUID based name if collisions are a worry
+                # For now assuming filename in DB is unique enough or we overwrite cache
+                try:
+                    gcs_service.download_to_local(video.gcs_input_uri, video_path)
+                except Exception as e:
+                    raise Exception(f"Failed to download from GCS: {str(e)}")
+            elif not os.path.exists(video_path):
+                raise FileNotFoundError(f"Video file not found at {video_path}")
+
+            # Calculate duration if not already set (e.g. from GCS upload)
+            if not video.duration:
+                video.duration = VideoService.get_video_duration(video_path)
+                db.session.commit()
+
+            # Step 1: Extract frames
             frame_dir = os.path.join(Config.FRAMES_DIR, str(video_id))
 
             frame_info = VideoService.extract_frames(
@@ -165,7 +183,12 @@ def merge_and_generate_commentary_task(self, video_id):
             # --- Generate Commentary ---
             # This now returns a dict {'commentary': [{'timestamp': x, 'text': y}, ...]}
             gemini = GeminiService()
-            commentary_data = gemini.generate_commentary(filtered_events, video.deck_description)
+            commentary_data = gemini.generate_commentary(
+                filtered_events,
+                video.deck_description,
+                video.duration,  # Pass video duration to constrain timestamps
+                video.character  # Pass character for personality/voice
+            )
 
             # Extract plain text for simple display
             full_text = " ".join([c['text'] for c in commentary_data.get('commentary', [])])
@@ -186,7 +209,11 @@ def merge_and_generate_commentary_task(self, video_id):
             try:
                 tts = FishAudioService()
                 # Synthesize each segment and get updated data with audio paths
-                updated_data = tts.synthesize_commentary_segments(commentary_data, video_id)
+                updated_data = tts.synthesize_commentary_segments(
+                    commentary_data,
+                    video_id,
+                    video.character  # Pass character for voice selection
+                )
 
                 commentary.structured_commentary = updated_data
                 commentary.status = 'completed'
@@ -234,6 +261,11 @@ def render_final_video_task(self, video_id):
             db.session.commit()
 
             source_path = os.path.join(Config.VIDEOS_DIR, video.filename)
+
+            # Ensure source video exists (it should if downloaded in step 1, but check again)
+            if not os.path.exists(source_path) and video.gcs_input_uri:
+                 gcs_service.download_to_local(video.gcs_input_uri, source_path)
+
             # Pass the structured commentary with audio paths
             commentary_data = video.commentary.structured_commentary
 
@@ -244,10 +276,37 @@ def render_final_video_task(self, video_id):
                 source_path,
                 video.edl,
                 commentary_data,
-                output_path
+                output_path,
+                video.character  # Pass character for overlay image
             )
 
             video.final_video_path = output_path
+
+            # Generate Thumbnail
+            try:
+                thumbnail_filename = f"thumb_{video.filename}.jpg"
+                thumbnail_path = os.path.join(Config.OUTPUT_DIR, thumbnail_filename)
+
+                VideoEditingService.extract_thumbnail(output_path, thumbnail_path)
+                video.thumbnail_path = thumbnail_path
+
+                # Upload thumbnail to GCS
+                gcs_thumb_name = f"{Config.GCS_THUMBNAIL_PREFIX}{thumbnail_filename}"
+                gcs_service.upload_to_gcs(thumbnail_path, gcs_thumb_name)
+                video.gcs_thumbnail_uri = gcs_thumb_name
+
+            except Exception as e:
+                print(f"Thumbnail generation failed: {e}")
+                # Don't fail the whole task for thumbnail
+
+            # Upload to GCS
+            try:
+                gcs_object_name = gcs_service.upload_to_gcs(output_path)
+                video.gcs_output_uri = gcs_object_name
+            except Exception as e:
+                # Log error but don't fail the whole task if upload fails (can retry manually)
+                print(f"Failed to upload output to GCS: {e}")
+
             video.status = 'completed'
             db.session.commit()
 

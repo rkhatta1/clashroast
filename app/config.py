@@ -22,7 +22,15 @@ class Config:
     GCP_PROJECT_ID = os.getenv('GCP_PROJECT_ID')
     GCP_LOCATION = os.getenv('GCP_LOCATION', 'us-central1')
     GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-    
+    GCS_BUCKET_NAME = os.getenv('GCS_BUCKET_NAME', 'clash-roast-videos')
+    GCS_UPLOAD_PREFIX = 'uploads/'
+    GCS_OUTPUT_PREFIX = 'outputs/'
+    GCS_THUMBNAIL_PREFIX = 'thumbnails/'
+
+    # Frontend
+    FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+    MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
+
     # Video Processing
     VIDEOS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'videos')
     FRAMES_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'frames')
@@ -36,6 +44,17 @@ class Config:
     # Fish Audio
     FISH_API_KEY = os.getenv('FISH_API_KEY')
     FISH_VOICE_ID = os.getenv('FISH_VOICE', '933563129e564b19a115bedd57b7406a') # Default to Sarah if not set
+
+    # Character Voice Mappings
+    CHARACTER_VOICES = {
+        'peter': os.getenv('FISH_VOICE', 'd75c270eaee14c8aa1e9e980cc37cf1b'),
+        'spongebob': os.getenv('FISH_SPONGEBOB', 'c4b9d66aa7a24f5781684e6ae4b2fcfd'),
+        'drake': os.getenv('FISH_DRAKE', '9ac5da5bee4c4036a9ccc3e46fd93a2f'),
+        'joerogan': os.getenv('FISH_JOEROGAN', '0a8f443cf9c34f6f848e01ea7260c549'),
+    }
+
+    # Default character
+    DEFAULT_CHARACTER = 'peter'
     
     # Storage
     AUDIO_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'audio')
@@ -43,6 +62,22 @@ class Config:
 
     # Overlay Assets
     PETER_PNG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'peter.png')
+
+    # Character overlay images
+    CHARACTER_IMAGES = {
+        'peter': os.path.join(os.path.dirname(os.path.dirname(__file__)), 'peter.png'),
+        'spongebob': os.path.join(os.path.dirname(os.path.dirname(__file__)), 'spongebob.png'),
+        'drake': os.path.join(os.path.dirname(os.path.dirname(__file__)), 'drake.png'),
+        'joerogan': os.path.join(os.path.dirname(os.path.dirname(__file__)), 'joerogan.png'),
+    }
+
+    # Character-specific overlay settings
+    CHARACTER_OVERLAY_SETTINGS = {
+        'peter': {'scale': 2.0, 'flip_orientation': False},
+        'spongebob': {'scale': 1.0, 'flip_orientation': True},  # Image is pre-flipped
+        'drake': {'scale': 1.0, 'flip_orientation': False},
+        'joerogan': {'scale': 1.5, 'flip_orientation': False},
+    }
 
     # Output Video Dimensions (Portrait 9:16)
     OUTPUT_WIDTH = 1080
@@ -54,7 +89,7 @@ class Config:
     CAPTION_COLOR = 'AAFF00'  # Lime green (BGR format for ASS: 00FFAA)
     CAPTION_OUTLINE_COLOR = '000000'  # Black outline
     CAPTION_OUTLINE_WIDTH = 6  # Thicker outline for bolder look
-    CAPTION_POSITION_Y = 50  # Percentage from top (40% = upper-center, avoids Peter)
+    CAPTION_POSITION_Y = 40  # Percentage from top (40% = upper-center, avoids Peter)
     CAPTION_POP_DURATION_MS = 100  # Duration of pop-in animation
     CAPTION_BOUNCE_SCALE = 110  # Overshoot scale percentage
 

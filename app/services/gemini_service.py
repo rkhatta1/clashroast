@@ -145,23 +145,32 @@ class GeminiService:
         
         # Parse JSON
         try:
+            if not response.text:
+                print(f"Gemini response.text is empty. Candidates: {response.candidates}")
+                # Return empty list or basic structure to avoid crashing the whole pipeline
+                return []
+
             return json.loads(response.text)
         except json.JSONDecodeError:
             # Fallback if raw text returned (shouldn't happen with schema)
+            if not response.text:
+                return []
             text = response.text.replace('```json', '').replace('```', '').strip()
             return json.loads(text)
 
-    def generate_commentary(self, merged_events, deck_description=None):
+    def generate_commentary(self, merged_events, deck_description=None, video_duration=None, character='peter'):
         """
         Generate first-person commentary using Gemini Pro.
 
         Args:
             merged_events: Merged frame analysis events
             deck_description: Optional user-provided description of their deck
+            video_duration: Total video duration in seconds (used to constrain timestamps)
+            character: Character key for prompt personality (peter, spongebob, drake, joerogan)
 
         Returns: Dict with 'commentary' list of {timestamp, text}.
         """
-        prompt = get_commentary_prompt(merged_events, deck_description)
+        prompt = get_commentary_prompt(merged_events, deck_description, video_duration, character)
         
         response_schema = {
             'type': 'OBJECT',
@@ -198,7 +207,13 @@ class GeminiService:
         )
         
         try:
+            if not response.text:
+                print(f"Gemini commentary response.text is empty. Candidates: {response.candidates}")
+                return {'commentary': []}
+
             return json.loads(response.text)
         except json.JSONDecodeError:
+            if not response.text:
+                return {'commentary': []}
             text = response.text.replace('```json', '').replace('```', '').strip()
             return json.loads(text)

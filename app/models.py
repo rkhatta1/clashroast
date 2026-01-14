@@ -11,9 +11,14 @@ class Video(db.Model):
     filename = db.Column(db.String(255), nullable=False)
     duration = db.Column(db.Float)
     status = db.Column(db.String(50), default='pending')  # pending, processing, completed, failed
+    character = db.Column(db.String(50), default='peter')  # Character voice: peter, spongebob, drake, joerogan
     deck_description = db.Column(db.Text)  # User-provided description of their deck
+    gcs_input_uri = db.Column(db.String(255)) # gs://bucket/uploads/filename
+    gcs_output_uri = db.Column(db.String(255)) # gs://bucket/outputs/filename
+    gcs_thumbnail_uri = db.Column(db.String(255)) # gs://bucket/thumbnails/filename.jpg
     edl = db.Column(JSON)  # Edit Decision List: [{"start": 0, "end": 10}, ...]
     final_video_path = db.Column(db.String(255))
+    thumbnail_path = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
