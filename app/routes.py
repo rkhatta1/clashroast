@@ -157,7 +157,8 @@ def get_video(video_id):
     if video.gcs_thumbnail_uri:
         try:
             thumbnail_url = gcs_service.generate_download_url(video.gcs_thumbnail_uri)
-        except Exception:
+        except Exception as e:
+            print(f"Error generating thumbnail URL: {e}")
             pass
 
     response = {
@@ -250,7 +251,8 @@ def list_videos():
         if v.gcs_thumbnail_uri:
             try:
                 thumbnail_url = gcs_service.generate_download_url(v.gcs_thumbnail_uri)
-            except Exception:
+            except Exception as e:
+                print(f"Error generating thumbnail URL: {e}")
                 pass
 
         video_list.append({
