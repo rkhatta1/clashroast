@@ -107,13 +107,17 @@ def process_video_pipeline(video_id: int) -> dict:
                 batch.analysis_response = response
                 batch.status = 'completed'
                 db.session.commit()
-                print(f"[Pipeline] Batch {batch.batch_number} analyzed")
+                print(f"[Pipeline] Batch {batch.batch_number} analyzed successfully")
 
             except Exception as e:
+                # NEW: Catch the error, log it, and mark as failed/skipped
                 batch.status = 'failed'
-                batch.error_message = str(e)
+                batch.error_message = f"Batch failed (possibly 503): {str(e)}"
                 db.session.commit()
-                raise
+                print(f"[Pipeline] WARNING: Skipping Batch {batch.batch_number} due to error: {e}")
+                
+                # Continue to the next batch instead of raising the exception
+                continue
 
         # Step 5: Merge and generate commentary
         print("[Pipeline] Merging batch responses...")
@@ -123,7 +127,7 @@ def process_video_pipeline(video_id: int) -> dict:
         ).order_by(FrameBatch.batch_number).all()
 
         if not completed_batches:
-            raise Exception('No completed batches found')
+            raise Exception('All batches failed to process. Cannot generate commentary.')
 
         batch_responses = [b.analysis_response for b in completed_batches]
         merged_events = MergeService.merge_batch_responses(batch_responses)

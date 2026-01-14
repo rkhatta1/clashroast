@@ -90,6 +90,7 @@ class GCSService:
             expiration=timedelta(hours=1),
             method="PUT",
             content_type=content_type,
+            service_account_email=self.client.get_service_account_email(),
         )
 
         return {
@@ -118,6 +119,7 @@ class GCSService:
             version="v4",
             expiration=timedelta(hours=expiration_hours),
             method="GET",
+            service_account_email=self.client.get_service_account_email(),
         )
 
         return url
