@@ -13,3 +13,4 @@ python-dotenv==1.0.0
 fish-audio-sdk==1.2.0
 gunicorn==23.0.0
 tenacity==9.1.2
+google-auth==2.47.0

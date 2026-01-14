@@ -6,6 +6,8 @@ import uuid
 from datetime import timedelta
 from google.cloud import storage
 from app.config import Config
+import google.auth
+from google.auth.transport.requests import Request
 
 
 class GCSService:
@@ -85,12 +87,19 @@ class GCSService:
         blob = self.bucket.blob(object_name)
 
         # Generate signed URL for upload
+        credentials = self.client._credentials
+        
+        # 2. Ensure the credentials have a valid token
+        if not credentials.valid:
+            credentials.refresh(Request())
+
+        # 3. Explicitly pass BOTH the email and the access token
         url = blob.generate_signed_url(
             version="v4",
             expiration=timedelta(hours=1),
-            method="PUT",
-            content_type=content_type,
-            service_account_email=self.client.get_service_account_email(),
+            method="GET",
+            service_account_email=credentials.service_account_email,
+            access_token=credentials.token, # Force remote signing with this token
         )
 
         return {
@@ -115,11 +124,19 @@ class GCSService:
         if not blob.exists():
             raise FileNotFoundError(f"Object {object_name} not found in bucket")
 
+        credentials = self.client._credentials
+        
+        # 2. Ensure the credentials have a valid token
+        if not credentials.valid:
+            credentials.refresh(Request())
+
+        # 3. Explicitly pass BOTH the email and the access token
         url = blob.generate_signed_url(
             version="v4",
             expiration=timedelta(hours=expiration_hours),
             method="GET",
-            service_account_email=self.client.get_service_account_email(),
+            service_account_email=credentials.service_account_email,
+            access_token=credentials.token, # Force remote signing with this token
         )
 
         return url
