@@ -70,11 +70,15 @@ def create_video():
     Mode 2 (Pre-create): Create placeholder with status='uploading'.
     """
     data = request.json
+    user_id = data.get('user_id')
     filename = data.get('filename')
     gcs_object_name = data.get('gcs_object_name')
     deck_description = data.get('deck_description')
     character = data.get('character', Config.DEFAULT_CHARACTER)
     status = data.get('status', 'pending') # 'pending' or 'uploading'
+
+    if not user_id:
+        return jsonify({'error': 'user_id required'}), 400
 
     if not filename:
         return jsonify({'error': 'filename required'}), 400
@@ -86,6 +90,7 @@ def create_video():
         }), 400
 
     video = Video(
+        user_id=user_id,
         filename=filename,
         gcs_input_uri=gcs_object_name, # Can be None if uploading
         deck_description=deck_description,
@@ -125,14 +130,23 @@ def create_video():
 def start_processing(video_id):
     """
     Start processing for an uploaded video.
-    Body: { "gcs_object_name": "..." }
+    Body: { "gcs_object_name": "...", "user_id": "..." }
     """
-    video = Video.query.get_or_404(video_id)
     data = request.json
+    user_id = data.get('user_id')
     gcs_object_name = data.get('gcs_object_name')
+
+    if not user_id:
+        return jsonify({'error': 'user_id required'}), 400
 
     if not gcs_object_name:
         return jsonify({'error': 'gcs_object_name required'}), 400
+
+    video = Video.query.get_or_404(video_id)
+
+    # Verify ownership
+    if video.user_id != user_id:
+        return jsonify({'error': 'Forbidden'}), 403
 
     if not gcs_service.check_object_exists(gcs_object_name):
         return jsonify({'error': 'Video file not found in storage'}), 404
@@ -151,7 +165,16 @@ def start_processing(video_id):
 @api.route('/videos/<int:video_id>', methods=['GET'])
 def get_video(video_id):
     """Get video processing status and results."""
+    user_id = request.args.get('user_id')
+
+    if not user_id:
+        return jsonify({'error': 'user_id query parameter required'}), 400
+
     video = Video.query.get_or_404(video_id)
+
+    # Verify ownership
+    if video.user_id != user_id:
+        return jsonify({'error': 'Forbidden'}), 403
 
     thumbnail_url = None
     if video.gcs_thumbnail_uri:
@@ -196,7 +219,16 @@ def get_video(video_id):
 @api.route('/videos/<int:video_id>/download', methods=['GET'])
 def download_video(video_id):
     """Generate a download URL for the completed video."""
+    user_id = request.args.get('user_id')
+
+    if not user_id:
+        return jsonify({'error': 'user_id query parameter required'}), 400
+
     video = Video.query.get_or_404(video_id)
+
+    # Verify ownership
+    if video.user_id != user_id:
+        return jsonify({'error': 'Forbidden'}), 403
 
     if video.status != 'completed':
         return jsonify({'error': 'Video processing not complete'}), 400
@@ -242,8 +274,13 @@ def get_commentary(video_id):
 
 @api.route('/videos', methods=['GET'])
 def list_videos():
-    """List all videos."""
-    videos = Video.query.order_by(Video.created_at.desc()).all()
+    """List videos for a specific user."""
+    user_id = request.args.get('user_id')
+
+    if not user_id:
+        return jsonify({'error': 'user_id query parameter required'}), 400
+
+    videos = Video.query.filter_by(user_id=user_id).order_by(Video.created_at.desc()).all()
 
     video_list = []
     for v in videos:
@@ -269,7 +306,16 @@ def list_videos():
 @api.route('/videos/<int:video_id>', methods=['DELETE'])
 def delete_video(video_id):
     """Delete a video and its resources."""
+    user_id = request.args.get('user_id')
+
+    if not user_id:
+        return jsonify({'error': 'user_id query parameter required'}), 400
+
     video = Video.query.get_or_404(video_id)
+
+    # Verify ownership
+    if video.user_id != user_id:
+        return jsonify({'error': 'Forbidden'}), 403
 
     try:
         # 1. Delete from GCS (input and output)

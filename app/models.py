@@ -8,6 +8,7 @@ class Video(db.Model):
     __tablename__ = 'videos'
 
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.String(255), nullable=False, index=True)  # User ID from BetterAuth
     filename = db.Column(db.String(255), nullable=False)
     duration = db.Column(db.Float)
     status = db.Column(db.String(50), default='pending')  # pending, processing, completed, failed
