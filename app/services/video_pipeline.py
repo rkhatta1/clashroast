@@ -189,7 +189,8 @@ def process_video_pipeline(video_id: int) -> dict:
         if not os.path.exists(source_path) and video.gcs_input_uri:
             gcs_service.download_to_local(video.gcs_input_uri, source_path)
 
-        output_filename = f"final_{video.filename}"
+        base_filename = os.path.splitext(video.filename)[0]
+        output_filename = f"final_{base_filename}.mp4"
         output_path = os.path.join(Config.OUTPUT_DIR, output_filename)
 
         VideoEditingService.render_final_video(

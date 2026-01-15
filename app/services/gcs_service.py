@@ -108,35 +108,29 @@ class GCSService:
             'expires_in': 3600,
         }
 
+
     def generate_download_url(self, object_name: str, expiration_hours: int = 24) -> str:
-        """
-        Generate a signed URL for downloading a file from GCS.
-
-        Args:
-            object_name: GCS object path
-            expiration_hours: Hours until URL expires
-
-        Returns:
-            Signed download URL
-        """
         blob = self.bucket.blob(object_name)
 
         if not blob.exists():
             raise FileNotFoundError(f"Object {object_name} not found in bucket")
+            
+        # Get original filename for the user
+        display_name = object_name.split('/')[-1]
 
+        # Remote signing configuration
         credentials = self.client._credentials
-        
-        # 2. Ensure the credentials have a valid token
         if not credentials.valid:
             credentials.refresh(Request())
 
-        # 3. Explicitly pass BOTH the email and the access token
         url = blob.generate_signed_url(
             version="v4",
             expiration=timedelta(hours=expiration_hours),
             method="GET",
             service_account_email=credentials.service_account_email,
-            access_token=credentials.token, # Force remote signing with this token
+            access_token=credentials.token,
+            # NEW: Force browser download with a specific filename
+            response_disposition=f'attachment; filename="{display_name}"'
         )
 
         return url
