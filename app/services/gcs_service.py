@@ -54,11 +54,11 @@ class GCSService:
 
         blob = self.bucket.blob(object_name)
 
-        # Create a resumable upload URL
+        # Create a resumable upload URL without origin restriction
+        # (Signed URLs are already secure via cryptographic signature)
         url = blob.create_resumable_upload_session(
             content_type=content_type,
             size=size,
-            origin=Config.FRONTEND_URL,
             timeout=3600,
         )
 
